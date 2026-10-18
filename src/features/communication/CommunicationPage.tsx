@@ -36,7 +36,7 @@ import type {
   PictogramOrderingState
 } from '@cboard-communication-core/pictogramOrdering'
 import type { CboardAccountSession } from '../../platform/cboardAccountPort'
-import { canEditCareLibrary } from '../../platform/taroCareContext'
+import { canEditCareLibrary, careScopedKey } from '../../platform/taroCareContext'
 import { useCareRefresh, loadCareSharedPhrases } from '../../platform/taroCareWorkspace'
 import { taroCboardSessionStore } from '../../platform/taroCboardAccountPort'
 import { taroCommunicationNavigationIntent } from '../../platform/taroCommunicationNavigationIntent'
@@ -49,6 +49,7 @@ import ExpressionWorkspace from './ExpressionWorkspace'
 import NetworkStatusNotice from './NetworkStatusNotice'
 import PatientActionButton from './PatientActionButton'
 import {
+  createExpressionSession,
   createExpressionSessionFromSavedPhrase,
   createExpressionSessionFromTileReferences,
   expressionSessionReducer,
@@ -70,6 +71,7 @@ function createPersonalImageSignature(
 
 export default function CommunicationPage() {
   const repositoryRef = useRef(createTaroCommunicationRepository())
+  const expressionScopeRef = useRef(careScopedKey('expression'))
   const communicationIdentityRef = useRef<{
     patientId: string
     workspaceId: string
@@ -261,12 +263,22 @@ export default function CommunicationPage() {
   }
 
   const refreshCareWorkspace = () => {
+    const nextScope = careScopedKey('expression')
+    const scopeChanged = nextScope !== expressionScopeRef.current
+    if (scopeChanged) {
+      expressionScopeRef.current = nextScope
+      expressionSessionRef.current = createExpressionSession()
+      expressionDispatch({ type: 'reset' })
+      communicationIdentityRef.current = repositoryRef.current.loadCommunicationIdentity()
+      setLibraryRevision(value => value + 1)
+    }
+    const nextIdentity = communicationIdentityRef.current!
     setCanEditLibrary(canEditCareLibrary())
     const nextConversation =
       repositoryRef.current.getActiveConversationSession()
     setConversationSession(current => {
       if (current.id !== nextConversation.id) {
-        expressionDispatch({ type: 'clear' })
+        expressionDispatch({ type: 'reset' })
       }
       return nextConversation
     })
@@ -281,13 +293,13 @@ export default function CommunicationPage() {
     const nextPersonalizedBoards = applyPersonalImagePreferencesToBoards(
       nextLibraryBoards,
       nextPersonalImagePreferences,
-      communicationIdentity
+      nextIdentity
     )
     const nextPersonalImageSignature = createPersonalImageSignature(
       nextPersonalImagePreferences
     )
     if (
-      nextPersonalImageSignature !==
+      !scopeChanged && nextPersonalImageSignature !==
       personalImageSignatureRef.current
     ) {
       const currentExpressionSession = expressionSessionRef.current
@@ -298,14 +310,14 @@ export default function CommunicationPage() {
           selectedTiles: applyPersonalImagePreferencesToItems(
             currentExpressionSession.selectedTiles,
             nextPersonalImagePreferences,
-            communicationIdentity
+            nextIdentity
           ),
           pipeline: {
             ...currentExpressionSession.pipeline,
             outputSnapshot: applyPersonalImagePreferencesToItems(
               currentExpressionSession.pipeline.outputSnapshot,
               nextPersonalImagePreferences,
-              communicationIdentity
+              nextIdentity
             )
           }
         }
@@ -319,7 +331,7 @@ export default function CommunicationPage() {
     if (nextLibraryVersion !== libraryVersionRef.current) {
       libraryVersionRef.current = nextLibraryVersion
       setLibraryRevision(value => value + 1)
-      expressionDispatch({ type: 'clear' })
+      expressionDispatch({ type: 'reset' })
     }
     const nextPreferences = taroCommunicationPreferencesStore.load()
     setPreferences(nextPreferences)
@@ -435,7 +447,7 @@ export default function CommunicationPage() {
       const nextSession = repositoryRef.current.resetConversationSession()
       setConversationSession(nextSession)
       setConversationNotice('新对话已开始，原有历史仍会保留。')
-      expressionDispatch({ type: 'clear' })
+      expressionDispatch({ type: 'reset' })
     } catch (error) {
       setConversationNotice('暂时无法开始新对话，请稍后重试。')
     }

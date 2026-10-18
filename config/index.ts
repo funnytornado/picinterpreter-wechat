@@ -152,7 +152,8 @@ export default defineConfig<'webpack5'>(async (merge, { command: _command, mode:
         chain.plugin('release-feature-manifest').use(ReleaseFeatureManifestPlugin, [releaseFlags])
         chain.resolve.plugin('tsconfig-paths').use(TsconfigPathsPlugin)
         chain.module.rule('care-shared-panel')
-          .test(/[Cc]are[^/\\]*\.js$/)
+          // This shared semantic module also contains syntax older WeChat cannot parse.
+          .test(/(?:[Cc]are[^/\\]*|pictogramSemantics)\.js$/)
           .include.add(path.resolve(__dirname, '../../cboard/src/common/communicationSupport')).end()
           .use('babel-loader').loader(require.resolve('babel-loader'))
           .options({ babelrc: false, configFile: false,

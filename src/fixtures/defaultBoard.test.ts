@@ -61,7 +61,9 @@ describe('CBoard Chinese default board calibration', () => {
         '修正澄清'
       ])
     )
-    expect(core.tiles).toHaveLength(15)
+    // The reviewed public Mulberry "she" card now supplements "he".
+    expect(core.tiles).toHaveLength(16)
+    expect(core.tiles.find(tile => tile.id === 'tuyujia-builtin-she')?.label).toBe('她')
     expect(repair.tiles.map(tile => tile.label)).toEqual(
       expect.arrayContaining(['不对', '写下来', '指给我看', '给我选项'])
     )

@@ -68,6 +68,7 @@ import {
   refreshReceiverMissingItems,
   replaceReceiverItem,
   replaceReceiverReviewItems,
+  retainReceiverItemAsText,
   type ReceiverWorkspaceResumeState,
   runReceiverSession,
   updateReceiverInput
@@ -161,6 +162,11 @@ export default function ReceiverWorkspace({
   const [isRecognitionActivityVisible, setIsRecognitionActivityVisible] =
     useState(false)
   const [isAiResegmenting, setIsAiResegmenting] = useState(false)
+  const [pendingAiSuggestion, setPendingAiSuggestion] = useState<{
+    applied: ReturnType<typeof applyCommunicationAiResegmentation>
+    generation: number
+    signature: string
+  } | null>(null)
   const [isCantoneseMode, setIsCantoneseMode] = useState(false)
   const [dialectSourceText, setDialectSourceText] = useState('')
   const [isDialectNormalizing, setIsDialectNormalizing] = useState(false)
@@ -187,6 +193,19 @@ export default function ReceiverWorkspace({
   const dialectGenerationRef = useRef(0)
   const dialectAudioGenerationRef = useRef(0)
   const imageTextRecognitionIntentIdRef = useRef('')
+  const restoredGapsRecordedRef = useRef(false)
+  useEffect(() => {
+    if (restoredGapsRecordedRef.current) return
+    restoredGapsRecordedRef.current = true
+    if (!initialState || initialState.activeDraft?.recordStatus !== 'draft') return
+    const tokens = initialState.session.reviewItems
+      .filter(item => !item.tile && !missingTokenRecords.some(record => record.normalizedToken === item.token))
+      .map(item => item.token)
+    if (tokens.length) {
+      try { onRecordMissingTokens({ tokens, rawText: initialState.session.inputText, scene: 'receiver' }) }
+      catch { /* Keep local review usable if the optional queue cannot persist. */ }
+    }
+  }, [initialState, missingTokenRecords, onRecordMissingTokens])
   const receiverSignature = [
     session.inputText,
     ...session.reviewItems.map(item =>
@@ -215,7 +234,8 @@ export default function ReceiverWorkspace({
   useEffect(() => {
     aiGenerationRef.current += 1
     setIsAiResegmenting(false)
-  }, [receiverSignature])
+    setPendingAiSuggestion(null)
+  }, [receiverSignature, boards, segmentationDraft])
 
   useEffect(() => {
     if (
@@ -284,6 +304,23 @@ export default function ReceiverWorkspace({
     setInsertionAfterItemId(null)
   }
 
+  const persistInputDraft = (text: string) => {
+    try {
+      if (!text.trim()) {
+        if (activeDraft) onDiscardResumableRecord(activeDraft.id)
+        setActiveDraft(null)
+        return
+      }
+      const entry = buildReceiverHistoryEntry(text, [])
+      const saved = activeDraft?.recordStatus === 'draft'
+        ? onUpdateDraft(activeDraft, entry) : onCreateDraft(entry)
+      if (!saved) throw new Error('draft unavailable')
+      setActiveDraft(saved)
+    } catch (_) {
+      setNotice('本机草稿保存失败，请先保留文字，避免关闭后丢失。')
+    }
+  }
+
   const clearRecognitionActivity = () => {
     if (recognitionActivityTimerRef.current) {
       clearTimeout(recognitionActivityTimerRef.current)
@@ -314,7 +351,7 @@ export default function ReceiverWorkspace({
     closePictogramPicker()
 
     const missingTokens = nextSession.reviewItems
-      .filter(item => !item.tile)
+      .filter(item => !item.tile && !item.personalReference)
       .map(item => item.token)
 
     if (missingTokens.length) {
@@ -654,7 +691,7 @@ export default function ReceiverWorkspace({
       correctionMemory
     })
     const missingTokens = nextSession.reviewItems
-      .filter(item => !item.tile)
+      .filter(item => !item.tile && !item.personalReference)
       .map(item => item.token)
 
     if (missingTokens.length) {
@@ -689,13 +726,10 @@ export default function ReceiverWorkspace({
     })
     const generation = ++aiGenerationRef.current
     const requestedSignature = receiverSignature
+    setPendingAiSuggestion(null)
     setIsAiResegmenting(true)
     setNotice('正在请求 AI 分词，当前图片序列仍可人工修改。')
-    const result = await taroCommunicationAiPort.resegment({
-      text: request.text,
-      unmatchedTokens: request.unmatchedTokens,
-      pictogramVocabulary: request.pictogramVocabulary
-    })
+    const result = await taroCommunicationAiPort.resegment(request)
     if (
       generation !== aiGenerationRef.current ||
       requestedSignature !== receiverSignatureRef.current
@@ -718,16 +752,28 @@ export default function ReceiverWorkspace({
       correctionMemory
     })
     if (!applied.applied) {
-      setNotice('AI 分词没有改善匹配率，已保留当前人工可编辑结果。')
+      setNotice('AI 建议未完整保留原文，已保留当前人工可编辑结果。')
       return
     }
+
+    setPendingAiSuggestion({ applied, generation, signature: requestedSignature })
+    setNotice('AI 建议已返回，请比较后选择采用；当前结果尚未改变。')
+  }
+
+  const handleAcceptAiSuggestion = () => {
+    if (
+      !pendingAiSuggestion ||
+      pendingAiSuggestion.generation !== aiGenerationRef.current ||
+      pendingAiSuggestion.signature !== receiverSignatureRef.current
+    ) return
+    const { applied } = pendingAiSuggestion
 
     const nextSession = replaceReceiverReviewItems(
       session,
       applied.reviewItems
     )
     const missingTokens = nextSession.reviewItems
-      .filter(item => !item.tile)
+      .filter(item => !item.tile && !item.personalReference)
       .map(item => item.token)
     if (missingTokens.length) {
       try {
@@ -746,6 +792,7 @@ export default function ReceiverWorkspace({
       'segmentation-ai',
       nextSession
     )
+    setPendingAiSuggestion(null)
     setSegmentationDraft(
       formatReceiverSegmentation(applied.segmentation || nextSession.segments)
     )
@@ -852,6 +899,7 @@ export default function ReceiverWorkspace({
                 ? '粤语原文已更新，请转换或人工修改后再生成图片。'
                 : '文字已更新，请重新生成图片序列。'
             )
+            persistInputDraft(event.detail.value)
           }}
         />
 
@@ -869,6 +917,7 @@ export default function ReceiverWorkspace({
                 setSegmentationDraft('')
                 closePictogramPicker()
                 setNotice(`已填入「${example}」，请生成图片序列。`)
+                persistInputDraft(example)
               }}
             >
               {example}
@@ -1067,7 +1116,7 @@ export default function ReceiverWorkspace({
           <View className='segmentation-editor'>
             <View className='segmentation-editor__heading'>
               <Text className='segmentation-editor__title'>分词结果（可修改）</Text>
-              <Text className='segmentation-editor__hint'>用 / 或空格分开词语；删掉分隔符可合并词语</Text>
+              <Text className='segmentation-editor__hint'>用 / 分开词语；引号内的标点和空白属于原文，请保留。删掉词语之间的分隔符可合并词语。</Text>
             </View>
             <Textarea
               id='receiver-segmentation-input'
@@ -1093,6 +1142,25 @@ export default function ReceiverWorkspace({
             >
               {isAiResegmenting ? 'AI 分词中' : 'AI 辅助分词'}
             </Button>
+            {pendingAiSuggestion && (
+              <View id='receiver-ai-suggestion'>
+                <Text>原文：{session.inputText}</Text>
+                <Text>当前分词：{session.reviewItems.map(item => item.token).join(' / ')}</Text>
+                <Text>建议分词：{pendingAiSuggestion.applied.segmentation?.join(' / ')}</Text>
+                <Button id='receiver-accept-ai-suggestion' onClick={handleAcceptAiSuggestion}>
+                  采用分词建议
+                </Button>
+                <Button
+                  id='receiver-dismiss-ai-suggestion'
+                  onClick={() => {
+                    setPendingAiSuggestion(null)
+                    setNotice('已保留当前结果。')
+                  }}
+                >
+                  保留当前结果
+                </Button>
+              </View>
+            )}
             <View
               className='correction-learning'
               id={correctionMemoryProbeId}
@@ -1123,16 +1191,19 @@ export default function ReceiverWorkspace({
             }`}
           >
             <Text className='quality-banner__count'>
-              {session.quality.matchedCount}/{session.quality.totalCount}
+              图片 {session.quality.imageCount}/{session.quality.totalCount}
             </Text>
             <View>
               <Text className='quality-banner__title'>
-                {session.quality.needsReview ? '建议逐项确认' : '图片序列可以使用'}
+                {session.quality.needsReview ? '建议逐项确认' : '表达序列可以使用'}
               </Text>
               <Text className='quality-banner__hint'>
-                {session.quality.missingCount
-                  ? `${session.quality.missingCount} 个词尚未匹配`
-                  : '所有词语均已有对应图片'}
+                {[
+                  session.quality.textOnlyCount > 0 ? `保留文字 ${session.quality.textOnlyCount} 项` : '',
+                  session.quality.missingCount > 0
+                    ? `${session.quality.missingCount} 项待处理`
+                    : session.quality.textOnlyCount > 0 ? '含文字，可以展示' : '所有词语均已有对应图片'
+                ].filter(Boolean).join(' · ')}
               </Text>
             </View>
           </View>
@@ -1171,6 +1242,33 @@ export default function ReceiverWorkspace({
                   </Text>
                 </View>
                 <View className='review-row__actions'>
+                  {!item.tile && item.personCandidates && item.personCandidates.length > 0 && (
+                    <View>
+                      <Text>同名人物，请选择本人照片：</Text>
+                      {item.personCandidates.map(candidate => (
+                        <Button key={candidate.id} className='replacement-option'
+                          onClick={() => persistReceiverEdit(RECEIVER_CORRECTION_ACTIONS.replace,
+                            item.id, replaceReceiverItem(session, item.id, candidate))}
+                        >
+                          <PictogramImage src={candidate.tile.image} label={candidate.displayLabel} />
+                          <Text>{candidate.displayLabel} · {candidate.boardName}</Text>
+                        </Button>
+                      ))}
+                    </View>
+                  )}
+                  {!item.tile && (
+                    <Button
+                      className='review-action'
+                      id={`receiver-retain-text-${index}`}
+                      onClick={() => persistReceiverEdit(
+                        RECEIVER_CORRECTION_ACTIONS.replace,
+                        item.id,
+                        retainReceiverItemAsText(session, item.id)
+                      )}
+                    >
+                      保留文字
+                    </Button>
+                  )}
                   <Button
                     className='review-action'
                     disabled={index === 0}

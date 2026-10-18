@@ -12,11 +12,13 @@ import { runtime } from './taroCareRuntime'
 import { careScopedKey, currentCareContext, saveCareSelection, withCareHydration } from './taroCareContext'
 import { taroPictureLibraryStore } from './taroPictureLibraryStore'
 import { preserveCareLocalTileMedia } from './careLocalMediaProjection'
+import { preserveCareLocalFavoriteMedia } from '@cboard-communication-core/careLocalMediaProjection'
 import { createTaroCommunicationRepository } from './taroCommunicationRepository'
 import { apiBaseUrlFor } from '../config/runtimeCapabilities'
 import { configureCareCloudSync } from './communicationCloudSync'
 import { taroPictogramOrderingStore } from './taroPictogramOrderingStore'
 import { careBuiltinImages } from './taroCareBuiltinImages'
+import { assertCareAiRequestScope } from './taroCommunicationAiPort'
 
 let active: { key: string; engine: ReturnType<typeof createCareSync> } | null = null
 let pending: Promise<void> | null = null
@@ -96,7 +98,7 @@ function project(
       const repository = createTaroCommunicationRepository()
       const kind = currentCareContext()?.selection?.relationship?.role === 'patient' ? 'favorite' : 'personalFavorite'
       const favorites = Object.values(snapshot.resources).filter((r: any) => !r.deleted && r.kind === kind)
-      if (!Taro.getStorageSync(careScopedKey('care-pending-favorites'))) repository.overwriteCommunicationSavedPhrases(favorites.map((r: any) => ({ ...decodeCareMedia(r.value, snapshot.media, image), id: r.id, createdAt: r.value.createdAt || r.updatedAt || 1 })))
+      if (!Taro.getStorageSync(careScopedKey('care-pending-favorites'))) repository.overwriteCommunicationSavedPhrases(preserveCareLocalFavoriteMedia(favorites.map((r: any) => ({ ...decodeCareMedia(r.value, snapshot.media, image), id: r.id, createdAt: r.value.createdAt || r.updatedAt || 1 })), repository.loadCommunicationSavedPhrases(), expectedContext, current || expectedContext))
       const preferences = snapshot.resources['preference:personalImagePreferences']
       if (preferences && !preferences.deleted && !Taro.getStorageSync(careScopedKey('care-pending-personalImagePreferences'))) repository.overwritePersonalImagePreferences(decodeCareMedia(preferences.value.value, snapshot.media, image))
     })
@@ -208,9 +210,24 @@ export function startCareWorkspace() {
   configureCareCloudSync({ active: () => Boolean(currentCareContext()?.profileId), sync: synchronizeCareWorkspace })
   const base = apiBaseUrlFor('cloudFeatures')?.replace(/\/$/, '')
   Taro.addInterceptor(chain => {
+    const params = chain.requestParams as typeof chain.requestParams & { __careAiRequestScope?: Parameters<typeof assertCareAiRequestScope>[0] }
+    const frozen = params.__careAiRequestScope
+    if (frozen) {
+      // This local marker is consumed before the network boundary. Never let
+      // a later account/profile/source selection rewrite an earlier request.
+      delete params.__careAiRequestScope
+      assertCareAiRequestScope(frozen)
+      if (!['/gpt/communication/sentences', '/gpt/communication/resegment']
+          .some(path => params.url === frozen.origin + path) ||
+          params.header?.Authorization !== `Bearer ${frozen.token}` ||
+          params.header?.['X-Care-Profile-Id'] !== frozen.profileId ||
+          params.header?.['X-Care-Funding-Id'] !== frozen.fundingId) {
+        throw Object.assign(new Error('AI_REQUEST_CONTEXT_CHANGED'), { code: 'AI_REQUEST_CONTEXT_CHANGED' })
+      }
+      return chain.proceed(params)
+    }
     const context = currentCareContext()
     const fundingId = context?.profileId && runtime.funding(context.profileId)
-    const params = chain.requestParams
     if (base && fundingId && context && params.url.startsWith(base + '/')) {
       params.header = { ...params.header, 'X-Care-Profile-Id': context.profileId, 'X-Care-Funding-Id': fundingId,
         'Idempotency-Key': params.header?.['Idempotency-Key'] || `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` }

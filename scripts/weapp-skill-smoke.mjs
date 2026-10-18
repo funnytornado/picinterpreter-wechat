@@ -20,9 +20,10 @@ import {
   storageRecoveryPath,
   unexpectedSimulatorConsoleErrors
 } from './weapp-e2e-safety.mjs'
+import { captureWechatStorageSource, restoreWechatStorageSource } from './weapp-e2e-storage.mjs'
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
-const projectPath = path.resolve(scriptDirectory, '..')
+const projectPath = path.resolve(process.env.WEAPP_E2E_PROJECT || path.join(scriptDirectory, '..'))
 const developerToolsCli = process.env.WECHAT_DEVTOOLS_CLI || ''
 const wechatideCandidates = [
   process.env.WECHATIDE_SKILL_CLI,
@@ -135,6 +136,9 @@ const OPEN_BOARD_LOG_ANONYMIZATIONS = [
 ]
 const runAccessibilityOnly =
   process.env.WEAPP_E2E_ACCESSIBILITY_ONLY === '1'
+const runOutputUndoOnly = process.env.WEAPP_E2E_OUTPUT_UNDO_ONLY === '1'
+const runReceiverRetentionOnly =
+  process.env.WEAPP_E2E_RECEIVER_RETENTION_ONLY === '1'
 const runBoardManagementOnly =
   !runAccessibilityOnly &&
   process.env.WEAPP_E2E_BOARD_MANAGEMENT_ONLY === '1'
@@ -1219,13 +1223,7 @@ async function readAccountRequestLog() {
 }
 
 async function snapshotStorage() {
-  const info = await callWx('getStorageInfoSync')
-  const keys = Array.isArray(info?.keys) ? info.keys : []
-  const entries = []
-  for (const key of keys) {
-    entries.push([key, await callWx('getStorageSync', [key])])
-  }
-  return entries
+  return evaluateWx(captureWechatStorageSource)
 }
 
 async function isolateStorage() {
@@ -1238,15 +1236,14 @@ async function isolateStorage() {
 }
 
 async function restoreStorage(entries) {
-  const currentInfo = await callWx('getStorageInfoSync')
-  const currentKeys = Array.isArray(currentInfo?.keys)
-    ? currentInfo.keys
-    : []
-  for (const key of currentKeys) {
-    await callWx('removeStorageSync', [key])
-  }
-  for (const [key, value] of entries) {
-    await callWx('setStorageSync', [key, value])
+  try {
+    await evaluateWx(restoreWechatStorageSource, [entries])
+  } catch (error) {
+    step('batch restore unavailable; using the original per-entry wx restoration before read-back verification')
+    const currentInfo = await callWx('getStorageInfoSync')
+    const currentKeys = Array.isArray(currentInfo?.keys) ? currentInfo.keys : []
+    for (const key of currentKeys) await callWx('removeStorageSync', [key])
+    for (const [key, value] of entries) await callWx('setStorageSync', [key, value])
   }
 
   const restored = await snapshotStorage()
@@ -2164,6 +2161,62 @@ async function verifyPersonalCardCopyScenario() {
   )
 }
 
+async function verifyOutputUndoScenario() {
+  const count = async expected => retry(`output count ${expected}`, async () =>
+    (await queryElements('.expression-chip')).length === expected ? true : null)
+  // Taro assigns fresh node IDs after clear/undo. Compare the rendered content,
+  // image sources and control state, excluding only those transient node IDs.
+  const output = async () => (await readOuterWxml('.expression-strip__inner'))
+    .replace(/ (?:id|data-sid)="_[^"]*"/g, '')
+  const history = () => callWx('getStorageSync', ['cboard_communication_history'])
+  const before = await history()
+  step('verifying backspace, accidental clear and consecutive undo')
+  await tap(`#expression-tile-${YES_TILE_ID}`)
+  await tap(`#expression-tile-${NO_TILE_ID}`)
+  await tap(`#expression-tile-${YES_TILE_ID}`)
+  await count(3)
+  const originalOutput = await output()
+  await tap('#expression-backspace-button')
+  await count(2)
+  await tap('#expression-clear-button')
+  await count(0)
+  assert.ok(!(await readOuterWxml('#expression-undo-delete-button')).includes('disabled="true"'))
+  await tap('#expression-undo-delete-button')
+  await count(2)
+  await tap('#expression-undo-delete-button')
+  await count(3)
+  assert.equal(await output(), originalOutput)
+  assert.ok((await readOuterWxml('#expression-undo-delete-button')).includes('disabled="true"'))
+  assert.equal(await history(), before, 'edits and undo do not silently save expressions')
+
+  step('blocking network APIs and restoring an accidentally cleared sequence offline')
+  await mockWx('getNetworkType', createCallbackWxMock(`{ networkType: 'none', errMsg: 'getNetworkType:ok' }`))
+  for (const method of ['request', 'downloadFile', 'uploadFile']) {
+    await mockWx(method, `function(options) { var error = { errMsg: '${method}:fail synthetic offline' }; if (options.fail) options.fail(error); if (options.complete) options.complete(error); return { abort: function() {} }; }`)
+  }
+  await tap('#expression-clear-button')
+  await count(0)
+  await tap('#expression-undo-delete-button')
+  await count(3)
+  assert.equal(await output(), originalOutput)
+  assert.equal(await history(), before)
+  await tap('#expression-confirm-button')
+  await waitForText('#expression-status-notice', '表达已确认')
+  step('reopening offline restores confirmed local history, without old undo history')
+  await navigate('reLaunch', PATIENT_PAGE_ROUTE)
+  await waitForSelector('.communication-page')
+  await count(3)
+  assert.ok((await readOuterWxml('#expression-undo-delete-button')).includes('disabled="true"'))
+  await tap('#expression-clear-button')
+  await count(0)
+  await tap('#expression-undo-delete-button')
+  await count(3)
+  await invokeTool('simulator_screenshot', {
+    project: projectPath, path: path.join(tempDirectory, 'output-undo-offline-restored.png')
+  })
+  await restoreWxMocks()
+}
+
 async function verifyOfflineCommunicationScenario() {
   step('setting the official wx network boundary to offline')
   await mockWx(
@@ -2243,6 +2296,57 @@ async function verifyOfflineCommunicationScenario() {
   await waitForSelector('.communication-page')
   await ensureCaregiverToolsVisible()
   await waitForNoSelector('#offline-status-notice')
+}
+
+async function verifyReceiverRetentionScenario() {
+  const source = '我不是不想吃饭'
+  await navigate('reLaunch', '/packages/caregiver/pages/receiver/index')
+  await waitForSelector('#receiver-input')
+  await input('#receiver-input', source)
+  await tap('#receiver-generate-button')
+  await waitForSelector('#receiver-segmentation-input')
+  assert.ok((await readOuterWxml('#receiver-open-display-button')).includes('disabled="true"'))
+  const count = (await queryElements('.review-row')).length
+  step(`reviewing ${count} synthetic reception items`)
+  for (let index = 0; index < count; index += 1) {
+    const selector = `#receiver-retain-text-${index}`
+    if ((await queryElements(selector)).length) {
+      await tap(selector)
+      step(`explicitly retained synthetic item ${index + 1} as text`)
+    }
+  }
+  await waitForSelector('.quality-banner--ready')
+  const drafts = await readJsonStorage(RECEIVER_RECORD_STORAGE_KEY)
+  const draft = drafts.find(record => record.inputText === source && record.recordStatus === 'draft')
+  assert.ok(draft)
+  assert.equal(draft.output.map(item => item.vocalization).join(''), source)
+  const negations = draft.pictogramSequence.filter(item => ['不是', '不想'].includes(item.originalToken))
+  assert.ok(negations.length > 0)
+  assert.ok(negations.every(item => item.textOnly))
+
+  step('restoring an explicitly reviewed double-negation draft from real local storage')
+  await navigate('reLaunch', '/packages/caregiver/pages/receiver/index')
+  await waitForProperty('#receiver-input', 'value', source)
+  await waitForSelector('.quality-banner--ready')
+  const resumed = await readJsonStorage(RECEIVER_RECORD_STORAGE_KEY)
+  assert.equal(resumed.filter(record => record.id === draft.id).length, 1)
+  assert.equal(resumed.find(record => record.id === draft.id).output.map(item => item.vocalization).join(''), source)
+
+  step('confirming the same retained-text reception twice without duplicate records')
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await tap('#receiver-open-display-button')
+    await waitForSelector('.receiver-display-page')
+    await tap('#receiver-feedback-understood')
+    await waitForSelector('.workspace--receiver')
+  }
+  const confirmed = (await readJsonStorage(RECEIVER_RECORD_STORAGE_KEY)).filter(record => record.recordStatus === 'confirmed' && record.inputText === source)
+  assert.equal(confirmed.length, 1)
+  assert.equal(confirmed[0].output.map(item => item.vocalization).join(''), source)
+  const history = await readJsonStorage(COMMUNICATION_HISTORY_STORAGE_KEY)
+  assert.equal(history.filter(record => record.direction === 'receive' && record.inputText === source).length, 1)
+  await navigate('reLaunch', '/pages/index/index')
+  await waitForSelector('.communication-page')
+  assert.equal((await readJsonStorage(RECEIVER_RECORD_STORAGE_KEY)).filter(record => record.id === confirmed[0].id).length, 1)
 }
 
 async function verifyExpressionStorageFailureScenario() {
@@ -2963,7 +3067,7 @@ try {
           'simulator_open_page',
           {
             project: projectPath,
-            page: 'pages/index/index'
+            page: runOutputUndoOnly ? PATIENT_PAGE_ROUTE.slice(1) : 'pages/index/index'
           },
           60_000
         )
@@ -3039,7 +3143,7 @@ try {
     'simulator_open_page',
     {
       project: projectPath,
-      page: 'pages/index/index'
+      page: runOutputUndoOnly ? PATIENT_PAGE_ROUTE.slice(1) : 'pages/index/index'
     },
     60_000
   )
@@ -3082,10 +3186,16 @@ try {
 
   step('isolating deterministic E2E storage without clearing user data')
   await isolateStorage()
-  await navigate('reLaunch', '/pages/index/index')
+  // This scenario targets the output strip directly. Avoid the launch-page
+  // redirect race that can detach the IDE's automation WebView connection.
+  await navigate('reLaunch', runOutputUndoOnly ? PATIENT_PAGE_ROUTE : '/pages/index/index')
   await waitForSelector('.communication-page')
 
-  if (runAccessibilityOnly) {
+  if (runOutputUndoOnly) {
+    await verifyOutputUndoScenario()
+  } else if (runReceiverRetentionOnly) {
+    await verifyReceiverRetentionScenario()
+  } else if (runAccessibilityOnly) {
     await verifyOnboardingAccessibilityScenario()
   } else if (runBoardManagementOnly) {
     await verifyBoardManagementScenario()
@@ -5490,6 +5600,10 @@ try {
 if (scenarioPassed && !process.exitCode) {
   const scenarioSummary = restoreStorageRecoveryOnly
     ? 'verified persistent storage recovery'
+    : runOutputUndoOnly
+    ? 'backspace, accidental clear, consecutive undo, blocked-network restoration, offline confirmation and cold reconstruction'
+    : runReceiverRetentionOnly
+    ? 'explicit missing-word text retention, double-negation draft cold resume, confirmation duplicate prevention, and confirmed storage reconstruction'
     : runAccessibilityOnly
     ? 'shared first-use onboarding, completion persistence, high contrast, extra-large type, two-column grid, reconstruction, replay and second completion'
     : runBoardManagementOnly

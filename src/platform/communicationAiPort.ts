@@ -1,14 +1,23 @@
 import type { ConversationScene } from '@cboard-communication-core/conversationSession'
 import {
+  normalizeResegmentResponse,
+  validateResegmentSource
+} from '@cboard-communication-core/communicationAi'
+import type { CommunicationAiResegmentResponse as CoreResegmentResponse } from '@cboard-communication-core/communicationAi'
+import {
   buildDialectNormalizationRequest,
   normalizeDialectNormalizationResponse
 } from '@cboard-communication-core/dialectNormalization'
+import { careErrorMessage } from '@cboard-communication-core/careErrors'
+import { getPrivatePersonRequestIdentity, restorePrivatePersonAiResponse } from '@cboard-communication-core/privatePersonAi'
 import { getCommunicationEnhancementLimitMessage } from './communicationEnhancementError'
 
 export interface CommunicationAiResult<T> {
   ok: boolean
   message: string
   value?: T
+  code?: string
+  status?: number
 }
 
 export interface CommunicationAiSentenceResponse {
@@ -22,10 +31,7 @@ export interface CommunicationAiCandidateFeedback {
   feedback: 'up' | 'down'
 }
 
-export interface CommunicationAiResegmentResponse {
-  tokens: string[]
-  provider: string
-}
+export type CommunicationAiResegmentResponse = CoreResegmentResponse
 
 export interface CommunicationDialectNormalizationResponse {
   sourceText: string
@@ -106,6 +112,7 @@ export interface CommunicationAiPort {
     recentSentences?: string[]
     candidateFeedback?: CommunicationAiCandidateFeedback[]
     scene?: ConversationScene
+    context?: { recentSentences?: string[]; candidateFeedback?: CommunicationAiCandidateFeedback[]; scene?: ConversationScene }
   }): Promise<CommunicationAiResult<CommunicationAiSentenceResponse>>
   generatePictogram(input: {
     label: string
@@ -129,6 +136,14 @@ interface RequestResult {
   data: unknown
 }
 
+function responseErrorCode(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  const payload = data as Record<string, unknown>
+  const nested = payload.error && typeof payload.error === 'object'
+    ? payload.error as Record<string, unknown> : null
+  return String(payload.code || nested?.code || '')
+}
+
 interface CommunicationAiDependencies {
   apiBaseUrl: string
   getAuthToken: () => string
@@ -136,6 +151,7 @@ interface CommunicationAiDependencies {
     url: string
     method: 'GET' | 'POST'
     data?: Record<string, unknown>
+    localIdentity?: string
     header: Record<string, string>
   }) => Promise<RequestResult>
 }
@@ -156,13 +172,13 @@ function hasHttpOrigin(value: string) {
   return /^https?:\/\/[^/]+/i.test(value)
 }
 
-function normalizeList(values: string[] | undefined, maxItems: number, maxLength: number) {
+function normalizeList(values: string[] | undefined, maxItems: number, maxLength: number, preserveOccurrences = false) {
   const seen = new Set<string>()
 
   return (Array.isArray(values) ? values : [])
     .map(value => String(value || '').trim().replace(/\s+/g, ' ').slice(0, maxLength))
     .filter(value => {
-      if (!value || seen.has(value)) return false
+      if (!value || !preserveOccurrences && seen.has(value)) return false
       seen.add(value)
       return true
     })
@@ -231,7 +247,8 @@ export function createCommunicationAiPort(
   async function requestAuthenticated(
     path: string,
     method: 'GET' | 'POST',
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
+    localIdentity?: string
   ): Promise<CommunicationAiResult<unknown>> {
     if (!configured) {
       return { ok: false, message: 'AI 服务尚未配置，已继续使用本地规则。' }
@@ -247,19 +264,30 @@ export function createCommunicationAiPort(
         url: apiBaseUrl + path,
         method,
         data,
+        ...(localIdentity ? { localIdentity } : {}),
         header: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         }
       })
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        const code = responseErrorCode(response.data)
         return {
           ok: false,
-          message: getErrorMessage(response.statusCode, response.data)
+          message: getErrorMessage(response.statusCode, response.data),
+          ...(code ? { code } : {}),
+          status: response.statusCode
         }
       }
       return { ok: true, message: 'AI 增强已完成。', value: response.data }
-    } catch (error) {
+    } catch (error: any) {
+      // The transport records an uncertain attempt before returning its stable
+      // code. Do not turn it into a fresh paid call or discard that distinction.
+      if (['AI_REQUEST_STORAGE_UNAVAILABLE', 'AI_REQUEST_CONTEXT_CHANGED',
+        'AI_REQUEST_RESULT_UNKNOWN', 'AI_REQUEST_INPUT_CHANGED', 'EXPLICIT_FUNDING_REQUIRED',
+        'PROFILE_ACCESS_DENIED'].includes(error?.code)) {
+        return { ok: false, code: error.code, message: careErrorMessage(error) }
+      }
       return { ok: false, message: '网络不可用，已继续使用本地规则。' }
     }
   }
@@ -402,7 +430,10 @@ export function createCommunicationAiPort(
     },
 
     async generateSentences(input) {
-      const pictogramLabels = normalizeList(input.pictogramLabels, MAX_LABELS, MAX_LABEL_LENGTH)
+      let localIdentity: string
+      try { localIdentity = getPrivatePersonRequestIdentity(input) }
+      catch (_) { return { ok: false, code: 'AI_PERSON_REFERENCE_MISMATCH', message: '人物选择信息已失效，请重新确认；未发起 AI 请求。' } }
+      const pictogramLabels = normalizeList(input.pictogramLabels, MAX_LABELS, MAX_LABEL_LENGTH, true)
       if (!pictogramLabels.length) {
         return { ok: false, message: '请先选择图片，再生成候选句。' }
       }
@@ -416,20 +447,24 @@ export function createCommunicationAiPort(
           candidateCount,
           context: {
             recentSentences: normalizeList(
-              input.recentSentences,
+              input.context?.recentSentences || input.recentSentences,
               MAX_CONTEXT_SENTENCES,
               MAX_TEXT_LENGTH
             ),
             candidateFeedback: normalizeCandidateFeedback(
-              input.candidateFeedback
+              input.context?.candidateFeedback || input.candidateFeedback
             ),
-            ...(input.scene ? { scene: input.scene } : {})
+            ...(input.context?.scene || input.scene ? { scene: input.context?.scene || input.scene } : {})
           }
-        }
+        }, localIdentity
       )
-      if (!result.ok) return { ok: false, message: result.message }
+      if (!result.ok) return { ok: false, message: result.message,
+        ...(result.code ? { code: result.code } : {}),
+        ...(result.status ? { status: result.status } : {}) }
 
-      const raw = result.value as Record<string, unknown>
+      let raw: Record<string, unknown>
+      try { raw = restorePrivatePersonAiResponse(input, result.value, 'communication-sentences') as Record<string, unknown> }
+      catch (_) { return { ok: false, code: 'AI_PERSON_REFERENCE_MISMATCH', message: 'AI 未保留人物身份，已保留本地候选。' } }
       const candidates = normalizeResponseList(
         raw.candidates,
         candidateCount,
@@ -539,8 +574,13 @@ export function createCommunicationAiPort(
     },
 
     async resegment(input) {
-      const text = String(input.text || '').trim().slice(0, MAX_TEXT_LENGTH)
-      if (!text) return { ok: false, message: '请输入需要重新分词的文字。' }
+      let localIdentity: string
+      try { localIdentity = getPrivatePersonRequestIdentity(input) }
+      catch (_) { return { ok: false, code: 'AI_PERSON_REFERENCE_MISMATCH', message: '人物选择信息已失效，请重新确认；未发起 AI 请求。' } }
+      const text = input.text
+      if (!validateResegmentSource(text)) {
+        return { ok: false, message: 'AI 优化支持 1–120 字，请分段处理；原文已保留。' }
+      }
 
       const vocabulary = normalizeList(
         input.pictogramVocabulary,
@@ -551,6 +591,7 @@ export function createCommunicationAiPort(
         '/gpt/communication/resegment',
         'POST',
         {
+          contractVersion: 2,
           text,
           unmatchedTokens: normalizeList(
             input.unmatchedTokens,
@@ -558,27 +599,23 @@ export function createCommunicationAiPort(
             MAX_LABEL_LENGTH
           ),
           pictogramVocabulary: vocabulary
-        }
+        }, localIdentity
       )
-      if (!result.ok) return { ok: false, message: result.message }
+      if (!result.ok) return { ok: false, message: result.message,
+        ...(result.code ? { code: result.code } : {}),
+        ...(result.status ? { status: result.status } : {}) }
 
-      const raw = result.value as Record<string, unknown>
-      let tokens = normalizeResponseList(raw.tokens, MAX_LABELS, MAX_LABEL_LENGTH)
-      if (vocabulary.length) {
-        const vocabularySet = new Set(vocabulary)
-        tokens = tokens.filter(token => vocabularySet.has(token))
-      }
-      if (!tokens.length) {
-        return { ok: false, message: 'AI 未给出更合适的分词，请继续人工修正。' }
+      let normalized: CommunicationAiResegmentResponse | null
+      try { normalized = restorePrivatePersonAiResponse(input, normalizeResegmentResponse(text, result.value), 'communication-resegment') as CommunicationAiResegmentResponse | null }
+      catch (_) { return { ok: false, code: 'AI_PERSON_REFERENCE_MISMATCH', message: 'AI 未保留人物身份，已保留当前结果。' } }
+      if (!normalized) {
+        return { ok: false, message: 'AI 建议未完整保留原文，已保留当前结果，请继续人工修正。' }
       }
 
       return {
         ok: true,
         message: 'AI 分词已返回，请照护者确认后应用。',
-        value: {
-          tokens,
-          provider: String(raw.provider || 'cboard-api-ai')
-        }
+        value: normalized
       }
     }
   }

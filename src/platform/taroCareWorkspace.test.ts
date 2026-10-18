@@ -185,3 +185,42 @@ test('persisted favorite baseline skips read-only usage changes and preserves un
   expect(h.engine.edit).toHaveBeenCalledWith('personalFavorite', 'new', expect.objectContaining({ sentence: '新收藏' }))
   expect(h.values.has(h.scoped('care-pending-favorites'))).toBe(false)
 })
+
+test('cloud favorite projection keeps its same-scope local recording and honors remote deletion', async () => {
+  h.values.clear()
+  const { withCareHydration } = await import('./taroCareContext')
+  const { projectCareBoards } = await import('@cboard-communication-core/careProjection')
+  const { decodeCareMedia } = await import('@cboard-communication-core/careMediaValues')
+  const { taroPictureLibraryStore } = await import('./taroPictureLibraryStore')
+  const { taroPictogramOrderingStore } = await import('./taroPictogramOrderingStore')
+  const { createTaroCommunicationRepository } = await import('./taroCommunicationRepository')
+  const { synchronizeCareWorkspace } = await import('./taroCareWorkspace')
+  let saved: any[] = [{ id: 'recorded', output: [{ id: 'water', boardId: 'food', sound: 'wxfile://synthetic-recording.mp3' }] }]
+  const overwrite = vi.fn((items: any[]) => { saved = items })
+  Object.assign(taroPictureLibraryStore, { load: () => [], reset: vi.fn() })
+  Object.assign(taroPictogramOrderingStore, { load: () => ({}), save: vi.fn() })
+  vi.mocked(projectCareBoards).mockReturnValue([])
+  vi.mocked(decodeCareMedia).mockImplementation(value => value)
+  vi.mocked(withCareHydration).mockImplementation(work => work())
+  vi.mocked(createTaroCommunicationRepository).mockReturnValue({
+    loadCommunicationSavedPhrases: () => saved,
+    overwriteCommunicationSavedPhrases: overwrite
+  } as any)
+  const snapshot: any = { locked: false, cursor: 1, permissions: ['read'], media: {}, resources: {
+    'personalFavorite:recorded': { kind: 'personalFavorite', id: 'recorded', value: {
+      sentence: '喝水', output: [{ id: 'water', boardId: 'food', label: '喝水' }]
+    } }
+  } }
+  const previous = h.engine.view()
+  h.engine.view.mockReturnValue(snapshot)
+  try {
+    await synchronizeCareWorkspace({ localOnly: true })
+    expect(saved[0].output[0]).toEqual({ id: 'water', boardId: 'food', label: '喝水', sound: 'wxfile://synthetic-recording.mp3' })
+    snapshot.resources['personalFavorite:recorded'].deleted = true
+    await synchronizeCareWorkspace({ localOnly: true })
+    expect(saved).toEqual([])
+  } finally {
+    h.engine.view.mockReturnValue(previous)
+    vi.mocked(withCareHydration).mockReset()
+  }
+})

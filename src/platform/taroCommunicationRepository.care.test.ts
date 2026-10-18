@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest'
-import { createTaroCommunicationRepository } from './taroCommunicationRepository'
+import { COMMUNICATION_STORAGE_KEYS } from '@cboard-communication-core/repository'
+import { captureMissingTokenImageUsage, createTaroCommunicationRepository } from './taroCommunicationRepository'
 import { careScopedKey, withCareHydration } from './taroCareContext'
 
 const h = vi.hoisted(() => ({ values: new Map<string, unknown>(), trigger: vi.fn() }))
@@ -97,4 +98,25 @@ test('cloud hydration can project personal image preferences without creating a 
   } as any))
   expect(h.values.has(careScopedKey('cboard_communication_personal_image_preferences'))).toBe(true)
   expect(h.values.has(careScopedKey('care-pending-personalImagePreferences'))).toBe(false)
+})
+
+test('cache rollback checks original and current profile references without changing either', () => {
+  const originalKey = careScopedKey(COMMUNICATION_STORAGE_KEYS.missingTokens)
+  const imageIsInUse = captureMissingTokenImageUsage()
+  h.values.set(originalKey, JSON.stringify([{ resolvedPictogram: { image: 'wxfile://saved/original.png' } }]))
+  h.values.set('care-selection-v1:account', { id: 'other-patient', familyId: 'other-family' })
+  const currentKey = careScopedKey(COMMUNICATION_STORAGE_KEYS.missingTokens)
+  expect(currentKey).not.toBe(originalKey)
+  h.values.set(currentKey, JSON.stringify([{ suggestedPictograms: [{ image: 'wxfile://saved/current.png' }] }]))
+  const before = [...h.values]
+  expect(imageIsInUse('wxfile://saved/original.png')).toBe(true)
+  expect(imageIsInUse('wxfile://saved/current.png')).toBe(true)
+  expect(imageIsInUse('wxfile://saved/uncommitted.png')).toBe(false)
+  expect([...h.values]).toEqual(before)
+})
+
+test.each(['{malformed', '{}', false, 0])('cache rollback refuses to infer no references from invalid storage: %s', stored => {
+  const imageIsInUse = captureMissingTokenImageUsage()
+  h.values.set(careScopedKey(COMMUNICATION_STORAGE_KEYS.missingTokens), stored)
+  expect(() => imageIsInUse('wxfile://saved/uncommitted.png')).toThrow()
 })

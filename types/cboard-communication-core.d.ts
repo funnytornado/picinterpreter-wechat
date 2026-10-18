@@ -373,6 +373,7 @@ declare module '@cboard-communication-core/symbolMatching' {
   import type { PictogramAttribution } from '@cboard-communication-core/pictogramAttribution'
 
   export interface CommunicationCatalogItem {
+    textOnly?: true
     id: string
     tile: TileDTO
     boardId: string
@@ -386,6 +387,7 @@ declare module '@cboard-communication-core/symbolMatching' {
   }
 
   export interface CommunicationOutputItem {
+    textOnly?: true
     id: string
     image: string
     mediaType?: 'image' | 'gif' | 'video'
@@ -598,6 +600,10 @@ declare module '@cboard-communication-core/receiverPipeline' {
   import type { PictogramAttribution } from '@cboard-communication-core/pictogramAttribution'
 
   export interface ReceiverReviewItem {
+    personalReference?: boolean
+    personCandidates?: CommunicationCatalogItem[]
+    lookupToken?: string
+    sourceSpan?: { start: number; end: number; offsetUnit: 'unicode-code-point' }
     id: string
     token: string
     tile: CommunicationCatalogItem | null
@@ -608,6 +614,8 @@ declare module '@cboard-communication-core/receiverPipeline' {
   export interface ReceiverMatchQuality {
     totalCount: number
     matchedCount: number
+    imageCount: number
+    textOnlyCount: number
     missingCount: number
     partialCount: number
     matchRate: number
@@ -628,6 +636,9 @@ declare module '@cboard-communication-core/receiverPipeline' {
       matchType: string
       confidence: number
       originalToken: string
+      textOnly?: true
+      lookupToken?: string
+      sourceSpan?: { start: number; end: number; offsetUnit: 'unicode-code-point' }
       attribution?: PictogramAttribution
     }>
   }
@@ -695,6 +706,7 @@ declare module '@cboard-communication-core/receiverPipeline' {
     itemId: string,
     candidate: CommunicationCatalogItem
   ): ReceiverReviewItem[]
+  export function retainReceiverReviewItemAsText(items: ReceiverReviewItem[], itemId: string): ReceiverReviewItem[]
 }
 
 declare module '@cboard-communication-core/receiverLifecycle' {
@@ -885,6 +897,7 @@ declare module '@cboard-communication-core/conversationSession' {
 }
 
 declare module '@cboard-communication-core/runtimePictogram' {
+  export function getRuntimePictogramStorageState(pictogram: unknown): 'embedded' | 'local-file' | 'remote' | 'missing'
   import type { PictogramAttribution } from '@cboard-communication-core/pictogramAttribution'
 
   export interface RuntimePictogramSource extends PictogramAttribution {}
@@ -896,6 +909,7 @@ declare module '@cboard-communication-core/runtimePictogram' {
     image: string
     backgroundColor: string
     source: RuntimePictogramSource
+    semantics?: import('@cboard-communication-core/pictogramSemantics').PictogramSemantics
   }
 
   export function normalizeRuntimePictogram(
@@ -1058,7 +1072,8 @@ declare module '@cboard-communication-core/missingTokens' {
 
   export function normalizeMissingTokenSuggestions(
     value: RuntimePictogram[] | undefined,
-    legacyValue?: RuntimePictogram | null
+    legacyValue?: RuntimePictogram | null,
+    token?: string | null
   ): RuntimePictogram[]
 
   export function getMissingTokenSuggestions(
@@ -1100,6 +1115,7 @@ declare module '@cboard-communication-core/missingTokens' {
   ): ReceiverReviewItem[]
 }
 declare module '@cboard-communication-core/repository' {
+  export const COMMUNICATION_STORAGE_KEYS: Readonly<Record<string, string>>
   import type {
     ConversationContext,
     ConversationSession
@@ -1496,4 +1512,9 @@ declare module '@cboard-communication-core/receiverSync' {
     history: CommunicationHistoryEntry[],
     deletedRecordIds?: Array<string | { id: string }>
   ): CommunicationHistoryEntry[]
+}
+declare module '@cboard-communication-core/personalPeople' {
+  import type { CommunicationCatalogItem } from '@cboard-communication-core/symbolMatching'
+  export function filterPublicPictureTokens(tokens: string[], catalog: CommunicationCatalogItem[]): string[]
+  export function getPersonalPeople(catalog: CommunicationCatalogItem[]): CommunicationCatalogItem[]
 }

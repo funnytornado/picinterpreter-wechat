@@ -16,11 +16,17 @@ import type { BoardDTO, TileDTO } from '@cboard-communication-core/dto'
 import type { CommunicationHistoryEntry } from '@cboard-communication-core/repository'
 
 export const MAX_EXPRESSION_TILES = 12
+// Match CBoard's bounded, memory-only output undo history.
+export const MAX_EXPRESSION_UNDO = 20
 
-export interface ExpressionSessionState {
+interface ExpressionSessionSnapshot {
   selectedTiles: TileDTO[]
   pipeline: ExpressionPipelineState
   restored: boolean
+}
+
+export interface ExpressionSessionState extends ExpressionSessionSnapshot {
+  undoHistory?: ExpressionSessionSnapshot[]
 }
 
 export type ExpressionSessionAction =
@@ -29,6 +35,8 @@ export type ExpressionSessionAction =
   | { type: 'remove-tile'; index: number }
   | { type: 'move-tile'; index: number; offset: number }
   | { type: 'clear' }
+  | { type: 'undo-delete' }
+  | { type: 'reset' }
   | { type: 'select-candidate'; index: number }
   | {
       type: 'apply-ai-candidates'
@@ -151,6 +159,27 @@ function rebuildSession(selectedTiles: TileDTO[]): ExpressionSessionState {
   }
 }
 
+function snapshotSession(state: ExpressionSessionState): ExpressionSessionSnapshot {
+  // TileDTOs and the pipeline are immutable. Keep media and candidate metadata;
+  // undo must not re-match pictures, regenerate AI sentences or write history.
+  return {
+    selectedTiles: state.selectedTiles.slice(),
+    pipeline: state.pipeline,
+    restored: state.restored
+  }
+}
+
+function rememberDeletion(
+  state: ExpressionSessionState,
+  selectedTiles: TileDTO[]
+): ExpressionSessionState {
+  return {
+    ...rebuildSession(selectedTiles),
+    undoHistory: [...(state.undoHistory || []), snapshotSession(state)]
+      .slice(-MAX_EXPRESSION_UNDO)
+  }
+}
+
 export function expressionSessionReducer(
   state: ExpressionSessionState,
   action: ExpressionSessionAction
@@ -169,7 +198,7 @@ export function expressionSessionReducer(
         )
         return selectedTiles === state.selectedTiles
           ? state
-          : rebuildSession(selectedTiles)
+          : rememberDeletion(state, selectedTiles)
       }
     case 'remove-tile': {
       const selectedTiles = removeExpressionOutputItem(
@@ -178,7 +207,7 @@ export function expressionSessionReducer(
       )
       return selectedTiles === state.selectedTiles
         ? state
-        : rebuildSession(selectedTiles)
+        : rememberDeletion(state, selectedTiles)
     }
     case 'move-tile': {
       const selectedTiles = moveExpressionOutputItem(
@@ -191,6 +220,13 @@ export function expressionSessionReducer(
         : rebuildSession(selectedTiles)
     }
     case 'clear':
+      return state.selectedTiles.length ? rememberDeletion(state, []) : state
+    case 'undo-delete': {
+      const history = state.undoHistory || []
+      if (!history.length) return state
+      return { ...history[history.length - 1], undoHistory: history.slice(0, -1) }
+    }
+    case 'reset':
       return rebuildSession([])
     case 'select-candidate':
       return {
@@ -206,7 +242,7 @@ export function expressionSessionReducer(
       return pipeline === state.pipeline ? state : { ...state, pipeline, restored: false }
     }
     case 'replace-session':
-      return action.state
+      return snapshotSession(action.state)
     default:
       return state
   }

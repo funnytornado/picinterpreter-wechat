@@ -203,6 +203,24 @@ const generatedBoards = sourceBoards.map(board => ({
   })
 }))
 
+// Default-card repairs must not break images referenced by earlier confirmed
+// records. Reuse the same source/fingerprint/conversion rules for this small,
+// explicit compatibility list; do not silently retain arbitrary orphan files.
+const retainedImages = JSON.parse(readFileSync(
+  path.join(projectRoot, 'scripts/cboard-retained-images.json'), 'utf8'
+)).map(({ sourceImage: image }) => {
+  const source = resolveSourceImage(image)
+  let outputName = convertedImages.get(source.normalized)
+  if (!outputName) {
+    outputName = sha256([
+      source.normalized, sha256(readFileSync(source.absolutePath)), IMAGE_VARIANT
+    ].join('\0')).slice(0, 16) + '.' + IMAGE_FORMAT
+    convertImage(magick, source.absolutePath, path.join(assetsRoot, outputName))
+    convertedImages.set(source.normalized, outputName)
+  }
+  return outputName
+})
+
 const manifest = {
   version: 1,
   source:
@@ -216,6 +234,7 @@ const manifest = {
     0
   ),
   imageCount: convertedImages.size,
+  retainedImages,
   imageSize: IMAGE_SIZE,
   imageFormat: IMAGE_FORMAT,
   imageColors: IMAGE_COLORS,

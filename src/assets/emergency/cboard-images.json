@@ -3,7 +3,8 @@
   "assets": [
     {
       "phraseId": "help",
-      "tileId": "B1AEEA5pm5tb",
+      "legacyTileId": "B1AEEA5pm5tb",
+      "sourceImage": "/symbols/mulberry/help_,_to.svg",
       "file": "5083f4d4500e0f76.png"
     },
     {

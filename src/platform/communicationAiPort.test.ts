@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 
-import { buildCommunicationAiSentenceRequest } from '@cboard-communication-core/communicationAi'
+import { buildCommunicationAiSentenceRequest, normalizeResegmentResponse } from '@cboard-communication-core/communicationAi'
+import { buildPersonalPictogramTileDTO } from '@cboard-communication-core/pictogramMetadataSuggestion'
 import { createCommunicationAiPort } from './communicationAiPort'
 
 function createHarness(options: { apiBaseUrl?: string; token?: string } = {}) {
@@ -58,7 +59,7 @@ function createHarness(options: { apiBaseUrl?: string; token?: string } = {}) {
     if (url.endsWith('/resegment')) {
       return {
         statusCode: 200,
-        data: { tokens: ['我', '不开心', '越界词'], provider: 'cboard-api-ai' }
+        data: { tokens: ['我', '不开心'], provider: 'cboard-api-ai' }
       }
     }
     if (url.endsWith('/dialect-normalization')) {
@@ -115,6 +116,21 @@ function createHarness(options: { apiBaseUrl?: string; token?: string } = {}) {
 }
 
 describe('communicationAiPort', () => {
+  test('keeps repeated same-name people distinct at the request boundary and fails closed on lost mapping', async () => {
+    const output = ['a', 'b', 'a'].map(id => buildPersonalPictogramTileDTO({ id, boardId: 'synthetic', category: 'people', label: '林知岚', image: `synthetic-private://${id}` }))
+    const request = vi.fn(async () => ({ statusCode: 200, data: { candidates: ['⟦P1⟧叫⟦P2⟧找⟦P1⟧。'] } }))
+    const port = createCommunicationAiPort({ apiBaseUrl: 'https://synthetic.invalid/api', getAuthToken: () => 'synthetic', request })
+    const built = buildCommunicationAiSentenceRequest({ output })
+    const result = await port.generateSentences(built)
+    expect(result.ok && result.value.candidates).toEqual(['林知岚叫林知岚找林知岚。'])
+    const options = request.mock.calls[0][0] as any
+    expect(options.data.pictogramLabels).toEqual(['⟦P1⟧', '⟦P2⟧', '⟦P1⟧'])
+    expect(options.localIdentity).toMatch(/^[a-f0-9]{64}$/)
+    expect(JSON.stringify(options.data)).not.toMatch(/林知岚|synthetic-private|personId|entries/)
+    request.mockClear()
+    expect(await port.generateSentences(JSON.parse(JSON.stringify(built)))).toMatchObject({ ok: false, code: 'AI_PERSON_REFERENCE_MISMATCH' })
+    expect(request).not.toHaveBeenCalled()
+  })
   test('keeps stored conversation out of the expression request passed to the transport', async () => {
     const harness = createHarness()
     const built = buildCommunicationAiSentenceRequest({
@@ -322,15 +338,42 @@ describe('communicationAiPort', () => {
     )
   })
 
-  test('filters AI resegmentation against the local pictogram vocabulary', async function () {
+  test('validates a legacy source-preserving response without filtering unknown words', async function () {
     const harness = createHarness()
     const result = await harness.port.resegment({
       text: '我不开心',
       unmatchedTokens: ['不开心'],
-      pictogramVocabulary: ['我', '不开心']
+      pictogramVocabulary: ['我']
     })
 
     expect(result.value?.tokens).toEqual(['我', '不开心'])
+    expect(result.value?.contractVersion).toBe(2)
+  })
+
+  test.each([
+    ['别打针', ['打针']],
+    ['喝水喝水', ['喝水']],
+    ['我不是不想吃饭', ['我', '吃饭']]
+  ])('refuses a lossy server response for %s', async (text, tokens) => {
+    const harness = createHarness()
+    harness.request.mockResolvedValueOnce({ statusCode: 200, data: { tokens, provider: 'test' } } as never)
+    const result = await harness.port.resegment({ text })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('保留当前结果')
+    expect(result.value).toBeUndefined()
+  })
+
+  test('preserves v2 spans, repeated tokens and sends the complete source', async () => {
+    const harness = createHarness()
+    const text = '🙂喝水喝水'
+    const response = normalizeResegmentResponse(text, { tokens: ['🙂', '喝水', '喝水'] })
+    harness.request.mockResolvedValueOnce({ statusCode: 200, data: response } as never)
+    const result = await harness.port.resegment({ text, pictogramVocabulary: ['喝水'] })
+    expect(result.value).toEqual(response)
+    expect(harness.request).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ text, contractVersion: 2 }) }))
+    harness.request.mockClear()
+    expect((await harness.port.resegment({ text: '水'.repeat(121) })).ok).toBe(false)
+    expect(harness.request).not.toHaveBeenCalled()
   })
 
   test('returns a source-preserving editable Cantonese draft', async () => {

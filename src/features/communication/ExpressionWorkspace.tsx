@@ -133,6 +133,7 @@ export default function ExpressionWorkspace({
   const [playbackPhrase, setPlaybackPhrase] =
     useState<CommunicationSavedPhraseEntry | null>(null)
   const [isGeneratingAi, setIsGeneratingAi] = useState(false)
+  const [aiCompletion, setAiCompletion] = useState(0)
   const [candidateFeedbackEntries, setCandidateFeedbackEntries] = useState(
     () =>
       normalizeExpressionCandidates(
@@ -151,6 +152,7 @@ export default function ExpressionWorkspace({
   const candidateAutoplayControllerRef =
     useRef<CandidateAutoplayController | null>(null)
   const aiGenerationRef = useRef(0)
+  const aiPendingRef = useRef(false)
   const candidateFeedbackDraftIdRef = useRef<string | null>(
     initialCandidateFeedbackDraft
       ? initialCandidateFeedbackDraft.id
@@ -161,6 +163,7 @@ export default function ExpressionWorkspace({
     .map(tile => `${tile.boardId}:${tile.id}`)
     .join('|')
   const selectionSignatureRef = useRef(selectionSignature)
+  const previousAiSelectionRef = useRef(selectionSignature)
   selectionSignatureRef.current = selectionSignature
   speechRateRef.current = speechRate
   playbackOutputRef.current = session.selectedTiles
@@ -268,6 +271,13 @@ export default function ExpressionWorkspace({
   }
 
   useEffect(() => {
+    if (previousAiSelectionRef.current !== selectionSignature) {
+      previousAiSelectionRef.current = selectionSignature
+      aiGenerationRef.current += 1
+      aiPendingRef.current = false
+      setIsGeneratingAi(false)
+    }
+    if (aiPendingRef.current) return
     const controller = candidateAutoplayControllerRef.current
     if (controller) {
       controller.schedule(
@@ -276,6 +286,7 @@ export default function ExpressionWorkspace({
       )
     }
   }, [
+    aiCompletion,
     candidateAutoplayDelaySeconds,
     candidateSignature,
     selectionSignature,
@@ -290,8 +301,17 @@ export default function ExpressionWorkspace({
     speechGenerationRef.current += 1
     isSpeakingRef.current = false
     aiGenerationRef.current += 1
+    aiPendingRef.current = false
     stopExpressionPlayback(wechatSpeechPort, wechatTileAudioPort)
   }, [])
+
+  // Same contract as Web: explicit patient actions own the current expression.
+  // Invalidate before awaiting anything; an old request cannot clear a new one.
+  const invalidatePendingAi = () => {
+    aiGenerationRef.current += 1
+    aiPendingRef.current = false
+    setIsGeneratingAi(false)
+  }
 
   const handlePatientInteraction = () => {
     const controller = candidateAutoplayControllerRef.current
@@ -307,6 +327,7 @@ export default function ExpressionWorkspace({
     action: ExpressionSessionAction,
     message: string
   ) => {
+    invalidatePendingAi()
     handlePatientInteraction()
     dispatch(action)
     setNotice(message)
@@ -318,12 +339,14 @@ export default function ExpressionWorkspace({
       return
     }
 
+    invalidatePendingAi()
     onPictogramUsed(tile.boardId, tile.id)
     dispatch({ type: 'add-tile', tile })
     setNotice(`已加入「${tile.label}」。`)
   }
 
   const handleConfirm = () => {
+    invalidatePendingAi()
     const historyEntry = buildExpressionHistoryEntry(
       session.pipeline,
       candidateFeedbackEntries
@@ -360,6 +383,7 @@ export default function ExpressionWorkspace({
   }
 
   const handleSpeech = async () => {
+    invalidatePendingAi()
     if (!selectedSentence) {
       setNotice('请先选择图片并生成句子。')
       return
@@ -371,12 +395,14 @@ export default function ExpressionWorkspace({
   }
 
   const handlePlayAllCandidates = async () => {
+    invalidatePendingAi()
     const controller = candidateAutoplayControllerRef.current
     if (controller) controller.cancel()
     await playCandidateQueue(session.pipeline.candidateSentences)
   }
 
   const handleStopSpeech = () => {
+    invalidatePendingAi()
     const controller = candidateAutoplayControllerRef.current
     if (controller) {
       controller.cancel({ stopActivePlayback: false })
@@ -386,6 +412,7 @@ export default function ExpressionWorkspace({
   }
 
   const handleSelectCandidate = async (sentence: string, index: number) => {
+    invalidatePendingAi()
     const controller = candidateAutoplayControllerRef.current
     if (controller) controller.cancel()
     dispatch({ type: 'select-candidate', index })
@@ -396,6 +423,7 @@ export default function ExpressionWorkspace({
     candidateIndex: number,
     feedback: 'up' | 'down'
   ) => {
+    invalidatePendingAi()
     const next = toggleExpressionCandidateFeedback(
       candidateFeedbackEntries,
       candidateIndex,
@@ -464,6 +492,7 @@ export default function ExpressionWorkspace({
       : null
 
   const handleSavePhrase = () => {
+    invalidatePendingAi()
     const savedPhrase = buildExpressionSavedPhraseEntry(session.pipeline)
     if (!savedPhrase) {
       setNotice('请先选择图片并生成一句话。')
@@ -478,6 +507,7 @@ export default function ExpressionWorkspace({
   }
 
   const handleReusePhrase = (item: CommunicationSavedPhraseEntry) => {
+    invalidatePendingAi()
     if (!onReusePhrase(item)) {
       setNotice('这条常用语引用的图片已不存在，暂时无法使用。')
       return
@@ -501,6 +531,7 @@ export default function ExpressionWorkspace({
   const handlePlaySavedPhrase = async (
     item: CommunicationSavedPhraseEntry
   ) => {
+    invalidatePendingAi()
     handlePatientInteraction()
     setPlaybackPhrase(item)
     onUseSavedPhrase(item)
@@ -528,6 +559,7 @@ export default function ExpressionWorkspace({
   }
 
   const handleGenerateAiCandidates = async () => {
+    if (aiPendingRef.current) return
     const request = buildCommunicationAiSentenceRequest({
       output: session.pipeline.outputSnapshot,
       context: conversationContext,
@@ -540,30 +572,33 @@ export default function ExpressionWorkspace({
 
     const generation = ++aiGenerationRef.current
     const requestedSignature = selectionSignature
+    aiPendingRef.current = true
+    candidateAutoplayControllerRef.current?.cancel()
     setIsGeneratingAi(true)
     setNotice('正在请求 AI 候选句，本地候选仍然可用。')
-    const result = await taroCommunicationAiPort.generateSentences({
-      pictogramLabels: request.pictogramLabels,
-      candidateCount: request.candidateCount,
-      recentSentences: request.context.recentSentences,
-      candidateFeedback: request.context.candidateFeedback,
-      scene: request.context.scene
-    })
-    if (
-      generation !== aiGenerationRef.current ||
-      requestedSignature !== selectionSignatureRef.current
-    ) {
-      return
-    }
-
-    setIsGeneratingAi(false)
-    if (!result.ok || !result.value) {
+    try {
+      const result = await taroCommunicationAiPort.generateSentences(request)
+      if (
+        generation !== aiGenerationRef.current ||
+        requestedSignature !== selectionSignatureRef.current
+      ) return
+      if (!result.ok || !result.value) {
+        setNotice(result.message)
+        return
+      }
+      dispatch({ type: 'apply-ai-candidates', response: result.value })
       setNotice(result.message)
-      return
+    } catch (_) {
+      if (generation === aiGenerationRef.current && requestedSignature === selectionSignatureRef.current)
+        setNotice('AI 暂时不可用，已保留本地候选，可以稍后重试。')
+    } finally {
+      if (generation === aiGenerationRef.current) {
+        aiPendingRef.current = false
+        setIsGeneratingAi(false)
+        if (requestedSignature === selectionSignatureRef.current)
+          setAiCompletion(value => value + 1)
+      }
     }
-
-    dispatch({ type: 'apply-ai-candidates', response: result.value })
-    setNotice(result.message)
   }
 
   return (
@@ -650,19 +685,32 @@ export default function ExpressionWorkspace({
 
         <View className='sequence-actions'>
           <PatientActionButton
-            action={PATIENT_ACTION_IDS.undo}
+            action={PATIENT_ACTION_IDS.remove}
+            id='expression-backspace-button'
+            outputIcon='backspace'
             className='button button--quiet'
             disabled={!session.selectedTiles.length}
-            onClick={() => dispatch({ type: 'remove-last' })}
-            label='撤回'
-            ariaLabel='撤回最后一张图片'
+            onClick={() => handleEditSelectedTile({ type: 'remove-last' }, '已退格，可以撤销删除。')}
+            label='退格'
+            ariaLabel='删除最后一张图片'
+          />
+          <PatientActionButton
+            action={PATIENT_ACTION_IDS.undo}
+            id='expression-undo-delete-button'
+            outputIcon='undo'
+            className='button button--quiet'
+            disabled={!session.undoHistory?.length}
+            onClick={() => handleEditSelectedTile({ type: 'undo-delete' }, '已恢复删除前的图片和候选句。')}
+            label='撤销删除'
+            ariaLabel='撤销上次删除，恢复图片序列'
           />
           <PatientActionButton
             action={PATIENT_ACTION_IDS.clear}
             id='expression-clear-button'
+            outputIcon='clear'
             className='button button--quiet'
             disabled={!session.selectedTiles.length}
-            onClick={() => dispatch({ type: 'clear' })}
+            onClick={() => handleEditSelectedTile({ type: 'clear' }, '已清空，可以撤销删除。')}
             label='清空'
             ariaLabel='清空当前图片序列'
           />

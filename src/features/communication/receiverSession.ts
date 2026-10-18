@@ -22,6 +22,7 @@ import {
   insertReceiverReviewItem,
   moveReceiverReviewItem,
   replaceReceiverReviewItem,
+  retainReceiverReviewItemAsText,
   restoreReceiverLoopState,
   type ReceiverHistoryEntry,
   type ReceiverMatchQuality,
@@ -56,6 +57,8 @@ interface ReceiverSessionOptions {
 const EMPTY_QUALITY: ReceiverMatchQuality = {
   totalCount: 0,
   matchedCount: 0,
+  imageCount: 0,
+  textOnlyCount: 0,
   missingCount: 0,
   partialCount: 0,
   matchRate: 0,
@@ -103,6 +106,10 @@ export function replaceReceiverReviewItems(
   reviewItems: ReceiverReviewItem[]
 ): ReceiverSessionState {
   return rebuildReceiverSession(state.inputText, reviewItems, state.matched)
+}
+
+export function retainReceiverItemAsText(state: ReceiverSessionState, itemId: string): ReceiverSessionState {
+  return rebuildReceiverSession(state.inputText, retainReceiverReviewItemAsText(state.reviewItems, itemId), state.matched)
 }
 
 export function createEmptyReceiverSession(inputText = ''): ReceiverSessionState {
@@ -153,7 +160,7 @@ export function restoreReceiverWorkspaceFromRecord(
     reviewItems: restored.reviewItems.slice(),
     outputPreview: restored.outputPreview.slice(),
     quality: buildReceiverMatchQuality(restored.reviewItems),
-    matched: true
+    matched: restored.reviewItems.length > 0
   }
 
   return createReceiverWorkspaceResumeState({
@@ -220,9 +227,9 @@ export function runReceiverSession(
   boards: BoardDTO[],
   options: ReceiverSessionOptions = {}
 ): ReceiverSessionState {
-  const normalizedInput = String(inputText || '').trim()
+  const normalizedInput = String(inputText || '')
 
-  if (!normalizedInput) {
+  if (!normalizedInput.trim()) {
     return createEmptyReceiverSession()
   }
 
@@ -289,7 +296,7 @@ export function refreshReceiverMissingItems(
   missingTokenRecords: MissingTokenRecord[],
   correctionMemory?: ReceiverCorrectionMemory
 ): ReceiverSessionState {
-  if (!state.matched || !state.quality.missingCount) {
+  if (!state.matched || (!state.quality.missingCount && !state.quality.partialCount)) {
     return state
   }
 

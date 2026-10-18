@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getSemanticCandidateHint } from '@cboard-communication-core/pictogramSemantics'
 import { Button, Input, Text, View } from '@tarojs/components'
 import type { BoardDTO } from '@cboard-communication-core/dto'
 import {
@@ -11,7 +12,8 @@ import type { MissingTokenRecord } from '@cboard-communication-core/repository'
 import {
   DEVICE_PRIVATE_RUNTIME_PICTOGRAM_PROVIDER,
   buildAiGeneratedRuntimePictogram,
-  buildDevicePrivateRuntimePictogram
+  buildDevicePrivateRuntimePictogram,
+  getRuntimePictogramStorageState
 } from '@cboard-communication-core/runtimePictogram'
 import {
   buildCommunicationTileCatalog,
@@ -19,6 +21,8 @@ import {
 } from '@cboard-communication-core/symbolMatching'
 
 import type { RuntimePictogram } from '../../platform/pictogramSearchPort'
+import { resolveTrustedImageUrl } from '../../platform/pictogramSearchPort'
+import { apiBaseUrlFor } from '../../config/runtimeCapabilities'
 import { taroCommunicationAiPort } from '../../platform/taroCommunicationAiPort'
 import { saveBase64PngToUserData } from '../../platform/taroBase64ImageFile'
 import { taroPersonalImagePort } from '../../platform/taroPersonalImagePort'
@@ -463,7 +467,8 @@ export default function MissingTokenQueue({
                   <View className='missing-queue__token-row'>
                     <Text className='missing-queue__token'>{record.normalizedToken}</Text>
                     <Text className={`missing-queue__status missing-queue__status--${record.status}`}>
-                      {STATUS_LABELS[record.status]}
+                      {record.status === 'suggested' && !onlineSuggestions.length
+                        ? STATUS_LABELS.new : STATUS_LABELS[record.status]}
                     </Text>
                   </View>
                   <Text className='missing-queue__meta'>出现次数：{record.occurrenceCount}</Text>
@@ -475,6 +480,19 @@ export default function MissingTokenQueue({
                       已关联：{resolvedCandidate ? getCandidateLabel(resolvedCandidate) : (onlineResolution ? onlineResolution.label : '')}
                     </Text>
                   )}
+                  {record.status === 'resolved' &&
+                    onlineResolution && (
+                      <View>
+                        <PictogramImage className='missing-queue__online-image' src={onlineResolution.image} label={onlineResolution.label} />
+                        <Text className='missing-queue__meta'>
+                        {getRuntimePictogramStorageState(onlineResolution) === 'embedded'
+                          ? '图片已保存到本机，可离线复用'
+                          : getRuntimePictogramStorageState(onlineResolution) === 'local-file'
+                            ? '已有本机图片文件；请核对上方图片能否显示'
+                            : '尚未确认离线可用，请联网重新保存图片'}
+                        </Text>
+                      </View>
+                    )}
                   {record.status === 'resolved' &&
                     isDevicePrivateResolution(record) && (
                       <Text className='missing-queue__meta'>
@@ -492,11 +510,18 @@ export default function MissingTokenQueue({
                       >
                         <PictogramImage
                           className='missing-queue__online-image'
-                          src={onlineSuggestion.image}
+                          src={resolveTrustedImageUrl(apiBaseUrlFor('onlinePictograms'), onlineSuggestion.image) || onlineSuggestion.image}
                           label={onlineSuggestion.label}
                         />
                         <View className='missing-queue__online-copy'>
                           <Text className='missing-queue__online-label'>{onlineSuggestion.label}</Text>
+                          {onlineSuggestion.semantics?.requiresReview && (
+                            <Text className='missing-queue__online-source'>
+                              {onlineSuggestion.semantics.relation === 'conflict'
+                                ? '图片来源含义与当前词语不同，请核对图片后再决定。'
+                                : (getSemanticCandidateHint(onlineSuggestion.semantics) || '候选图片尚未确认含义，请结合原句核对。')}
+                            </Text>
+                          )}
                           <Text className='missing-queue__online-source'>
                             来源：{onlineSuggestion.source.name} · {onlineSuggestion.source.license}
                           </Text>

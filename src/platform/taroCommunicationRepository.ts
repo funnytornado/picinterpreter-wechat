@@ -1,9 +1,32 @@
 import Taro from '@tarojs/taro'
-import type { CommunicationRepository } from '@cboard-communication-core/repository'
+import { COMMUNICATION_STORAGE_KEYS, type CommunicationRepository } from '@cboard-communication-core/repository'
 import { sameCareFavoriteList } from '@cboard-communication-core/careFavoriteChanges'
 
 import { createWechatCommunicationRepository } from './communicationRepository'
 import { canEditCarePreferences, careScopedKey, currentCareContext, isCareHydrating, markCareLocalChange, withCareHydration } from './taroCareContext'
+
+// Keep the original storage scope readable after an async download and a profile
+// change. Raw references are deliberate: a stale candidate can still own a file.
+export function captureMissingTokenImageUsage() {
+  const originalKey = careScopedKey(COMMUNICATION_STORAGE_KEYS.missingTokens)
+  return (image: string) => {
+    const keys = new Set([
+      originalKey,
+      careScopedKey(COMMUNICATION_STORAGE_KEYS.missingTokens)
+    ])
+    return [...keys].some(key => {
+      const stored = Taro.getStorageSync(key)
+      if (stored === '' || stored === undefined || stored === null) return false
+      const records = JSON.parse(String(stored))
+      if (!Array.isArray(records)) throw new Error('Missing token references unavailable')
+      return records.some(record => record && [
+        record.resolvedPictogram,
+        record.suggestedPictogram,
+        ...(Array.isArray(record.suggestedPictograms) ? record.suggestedPictograms : [])
+      ].some(pictogram => pictogram && pictogram.image === image))
+    })
+  }
+}
 
 export function createTaroCommunicationRepository(): CommunicationRepository {
   // Repository schema initialization is local, not a user-requested cloud edit.

@@ -4,16 +4,16 @@
   "decision": "正式发布检查只接受 status=approved；当前 ARASAAC 和 CBoard 图符继续用于开发与测试，但在取得书面许可或完成替换前阻断公司主体正式发布。",
   "reason": "ARASAAC 采用 CC BY-NC-SA 4.0，含非商业限制；17 个 CBoard 分类图符缺少逐图明确许可证据。",
   "evidence": "THIRD_PARTY_NOTICES.md、CBoard 默认 boards.json、逐图卡归因规则及生成清单。",
-  "effectiveScope": "微信小程序随包的 46 个默认板、871 个图卡和 798 张去重图片。",
+  "effectiveScope": "微信小程序随包的 46 个默认板、888 个图卡和 814 张去重图片。2026-10-12 由 Codex（GPT-6）接回13个既有Mulberry素材图卡；2026-10-14由Codex（运行模型未独立核实）补入翻身、洗脸、洗手3个已有Mulberry素材图卡。2026-10-15由Codex（运行模型未独立核实）同步既有Mulberry洗手液图卡的计数与归因清单。来源与许可条件不变，其他待审核状态不变。 2026-10-16 Codex（GPT-6）复用2张Mulberry开门/开罐头及1张ARASAAC女性指代图，现为891张图卡、817张去重图片（含1张旧确认记录兼容图）；仅更新数量与来源，不改变许可审批状态。 2026-10-17 Codex（运行模型未独立核实）复用既有 Mulberry hot.svg 增加物体温度图卡，现为 892 张图卡、818 张去重图片；个人吃饭图卡仅作本地恢复验证，不纳入默认包。仅更新数量与来源，保留全部既有许可审批状态。",
   "providers": {
     "mulberry": {
       "status": "approved",
-      "expectedTileCount": 792,
+      "expectedTileCount": 812,
       "condition": "保留署名并遵守 CC BY-SA 4.0。"
     },
     "arasaac": {
       "status": "pending-license-or-replacement",
-      "expectedTileCount": 62,
+      "expectedTileCount": 63,
       "condition": "公司主体正式发布前取得适用许可，或替换全部相关图符。"
     },
     "cboard": {

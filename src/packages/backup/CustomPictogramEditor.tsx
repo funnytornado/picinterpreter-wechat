@@ -140,6 +140,7 @@ export default function CustomPictogramEditor({
     emptyDraft(boards[0] ? boards[0].id : '')
   )
   const [busyAction, setBusyAction] = useState('')
+  const isPerson = draft.category === 'people'
   const [isRecordingSound, setIsRecordingSound] = useState(false)
   const [originalImage, setOriginalImage] = useState('')
   const [copyTargetBoardId, setCopyTargetBoardId] = useState('')
@@ -262,6 +263,10 @@ export default function CustomPictogramEditor({
 
   const choosePhoto = async (withSuggestion: boolean) => {
     if (editingEntry) return
+    if (withSuggestion && isPerson) {
+      setNotice('人物照片只用于私有图库，请手工填写全名。')
+      return
+    }
     if (withSuggestion) {
       const consent = await Taro.showModal({
         title: '单次视觉识别授权',
@@ -304,7 +309,7 @@ export default function CustomPictogramEditor({
 
     setNotice('照片已保存在本机，正在异步生成可编辑建议…')
     const result =
-      await taroPictogramMetadataSuggestionPort.suggest(selected.image)
+      await taroPictogramMetadataSuggestionPort.suggest(selected.image, { personalPerson: isPerson })
     if (requestId !== requestIdRef.current) return
     if (result.ok && result.value) {
       const suggestion = result.value
@@ -355,6 +360,10 @@ export default function CustomPictogramEditor({
   }
 
   const removeBackground = async () => {
+    if (isPerson) {
+      setNotice('人物照片不上传去背景服务，可直接使用本地照片。')
+      return
+    }
     if (
       editingEntry ||
       draft.mediaType === 'video' ||
@@ -709,6 +718,16 @@ export default function CustomPictogramEditor({
           : '新图卡只保存在当前微信设备；只有明确同意时才会单次上传以生成建议。')}
       </Text>
 
+      {canEdit && (
+        <View>
+          <Button disabled={controlsBusy || Boolean(draft.image) || Boolean(editingEntry)}
+            onClick={() => updateField('category', isPerson ? '' : 'people')}
+          >
+            {isPerson ? '人物卡（全名＋本人照片）' : '切换为人物卡'}
+          </Button>
+          {isPerson && <Text>请使用全名，不填昵称或亲属称呼。照片不会发送给视觉模型或公共补图。</Text>}
+        </View>
+      )}
       {canEdit && !editingEntry && (
         <View className='custom-pictogram-editor__photo-actions'>
         <Button
@@ -720,7 +739,7 @@ export default function CustomPictogramEditor({
         </Button>
         <Button
           className='custom-pictogram-button'
-          disabled={controlsBusy}
+          disabled={controlsBusy || isPerson}
           onClick={() => choosePhoto(true)}
         >
           选图并生成建议
@@ -760,7 +779,7 @@ export default function CustomPictogramEditor({
               <View className='custom-pictogram-editor__background-removal'>
                 <Button
                   className='custom-pictogram-button custom-pictogram-button--background'
-                  disabled={controlsBusy || Boolean(originalImage)}
+                  disabled={controlsBusy || Boolean(originalImage) || isPerson}
                   onClick={removeBackground}
                 >
                   {busyAction === 'background'
@@ -790,7 +809,7 @@ export default function CustomPictogramEditor({
             <Input
               className='custom-pictogram-input'
               maxlength={40}
-              placeholder='图卡名称（必填）'
+              placeholder={isPerson ? '全名（必填）' : '图卡名称（必填）'}
               value={draft.label}
               disabled={controlsBusy}
               onInput={event =>
@@ -850,9 +869,9 @@ export default function CustomPictogramEditor({
             <Input
               className='custom-pictogram-input'
               maxlength={160}
-              placeholder='同义词，用逗号分隔'
+              placeholder={isPerson ? '人物仅按全名匹配，不使用昵称' : '同义词，用逗号分隔'}
               value={draft.synonyms}
-              disabled={controlsBusy}
+              disabled={controlsBusy || isPerson}
               onInput={event =>
                 updateField('synonyms', event.detail.value)
               }
@@ -862,7 +881,7 @@ export default function CustomPictogramEditor({
               maxlength={40}
               placeholder='语义分类，例如：饮食、家人'
               value={draft.category}
-              disabled={controlsBusy}
+              disabled={controlsBusy || isPerson}
               onInput={event =>
                 updateField('category', event.detail.value)
               }

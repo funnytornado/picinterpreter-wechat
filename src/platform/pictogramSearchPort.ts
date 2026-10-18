@@ -1,6 +1,7 @@
 import {
   normalizeRuntimePictogram as normalizeCoreRuntimePictogram
 } from '@cboard-communication-core/runtimePictogram'
+import { rankPictogramCandidates } from '@cboard-communication-core/pictogramSemantics'
 
 export interface RuntimePictogramSource {
   provider: string
@@ -15,6 +16,7 @@ export interface RuntimePictogramSource {
 }
 
 export interface RuntimePictogram {
+  semantics?: import('@cboard-communication-core/pictogramSemantics').PictogramSemantics
   id: string
   label: string
   vocalization: string
@@ -93,15 +95,19 @@ function getApiOrigin(baseUrl: string) {
   return match ? match[1] : ''
 }
 
-function resolveTrustedImageUrl(baseUrl: string, imageUrl: unknown) {
+export function resolveTrustedImageUrl(baseUrl: string, imageUrl: unknown) {
+  baseUrl = normalizeBaseUrl(baseUrl)
   const value = String(imageUrl || '').trim()
   const origin = getApiOrigin(baseUrl)
   if (!origin || !value) return ''
 
   if (value.startsWith('/')) {
+    if (value.startsWith('/pictograms/')) return baseUrl + value
     return origin + value
   }
 
+  if (value.startsWith(origin + '/pictograms/'))
+    return baseUrl + value.slice(origin.length)
   return value === origin || value.startsWith(origin + '/') ? value : ''
 }
 
@@ -151,7 +157,7 @@ export function createPictogramSearchPort(
         const payload = response.data as { results?: unknown[] } | null
         const payloadResults =
           payload && Array.isArray(payload.results) ? payload.results : []
-        const results = payloadResults
+        const normalizedResults = payloadResults
           .map(item => {
             if (!item || typeof item !== 'object') return null
             const raw = item as Record<string, unknown>
@@ -160,6 +166,9 @@ export function createPictogramSearchPort(
             return token && pictogram ? { token, pictogram } : null
           })
           .filter((item): item is PictogramSearchResult => Boolean(item))
+        const results = queryTokens.flatMap(token => rankPictogramCandidates(token,
+          normalizedResults.filter(item => item.token === token).map(item => item.pictogram))
+          .map(pictogram => ({ token, pictogram })))
 
         return {
           ok: true,
