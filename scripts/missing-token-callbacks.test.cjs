@@ -16,6 +16,9 @@ require.extensions['.js']=(mod,file)=>{
 const {createCommunicationRepository}=require(path.join(web,'src/common/communicationSupport/repository.js'));
 const {normalizeMissingTokenSuggestions,getMissingTokenSuggestions}=require(path.join(web,'src/common/communicationSupport/missingTokens.js'));
 const {buildArasaacSemanticFields}=require(path.join(web,'src/common/communicationSupport/pictogramSemantics.js'));
+const {filterPublicPictureTokens}=require(path.join(web,'src/common/communicationSupport/personalPeople.js'));
+const {buildCommunicationTileCatalog}=require(path.join(web,'src/common/communicationSupport/symbolMatching.js'));
+const {currentImageOperationEpoch,invalidateImageOperations}=require(path.join(web,'src/common/communicationSupport/imageOperationEpoch.js'));
 require.extensions['.js']=previous;
 const ts=require('typescript');
 const file=path.join(mini,'src/packages/caregiver/pages/receiver/index.tsx');
@@ -39,6 +42,8 @@ function fixture(status='new'){
   const pending=[],removed=[];let scope='family-a',renders=0;
   const port={search:tokens=>new Promise(resolve=>pending.push({tokens,resolve})),cache:p=>new Promise(resolve=>pending.push({picture:p,resolve}))};
   const context={repositoryRef:{current:repository},taroPictogramSearchPort:port,normalizeMissingTokenSuggestions,getMissingTokenSuggestions,
+    currentImageOperationEpoch,preparedMissingImagesRef:{current:new Map()},
+    filterPublicPictureTokens,buildCommunicationTileCatalog,communicationBoards:[],
     missingTokenRequestsRef:{current:new Map()},missingTokenConfirmationsRef:{current:new Set()},missingTokenScopeKey:scope,getMissingTokenScopeKey:()=>scope,setMissingTokenItems:()=>renders++,
     captureMissingTokenImageUsage:()=>image=>{
       if(referenceCheckFails)throw new Error('storage unreadable');
@@ -63,7 +68,8 @@ for(const mode of ['search','cache']){
       const before=JSON.stringify(f.current());
       f.pending[0].resolve(mode==='search'?found():{ok:true,value:cachedPicture});await task;
       assert.equal(JSON.stringify(f.current()),before);
-      assert.deepEqual(f.removed,mode==='cache'?[cachedPicture.image]:[]);
+      // Cancellation does not prove a stored file has no other snapshot references.
+      assert.deepEqual(f.removed,[]);
       if(action==='scope'||action==='hide')assert.equal(f.renders(),0);
     });
   }
@@ -101,7 +107,7 @@ test('candidate replacement during caching cannot confirm the old picture',async
   f.repository.reviewMissingToken(f.record.id,{status:'suggested',suggestedPictogram:{...picture,image:'/replacement.png'},suggestedPictogramId:picture.id});
   const before=JSON.stringify(f.current());f.pending[0].resolve({ok:true,value:cachedPicture});
   assert.equal((await task).ok,false);assert.equal(JSON.stringify(f.current()),before);
-  assert.deepEqual(f.removed,[cachedPicture.image]);
+  assert.deepEqual(f.removed,[]);
 });
 test('failed cache preserves review; retry persists the confirmed offline file across repository restart',async()=>{
   const f=fixture('suggested'),before=JSON.stringify(f.current());let task=f.accept(f.record.id,picture.id);
@@ -123,31 +129,30 @@ test('duplicate confirmations start only one cache operation before rerender',as
   assert.equal(f.current().resolvedPictogram.image,cachedPicture.image);
   assert.deepEqual(f.removed,[]);
 });
-test('metadata quota failure rolls back the file, retains the suggestion and permits retry',async()=>{
+test('metadata quota failure retains prepared bytes and retries without a second download',async()=>{
   const f=fixture('suggested'),before=JSON.stringify(f.current()),task=f.accept(f.record.id,picture.id);
   f.setWriteFailure(true);f.pending[0].resolve({ok:true,value:cachedPicture});
   const result=await task;assert.equal(result.ok,false);assert.match(result.message,/词图关联保存失败/);
-  assert.equal(JSON.stringify(f.current()),before);assert.deepEqual(f.removed,[cachedPicture.image]);
+  assert.equal(JSON.stringify(f.current()),before);assert.deepEqual(f.removed,[]);
   f.setWriteFailure(false);const retry=f.accept(f.record.id,picture.id);
-  f.pending[1].resolve({ok:true,value:{...cachedPicture,image:'wxfile://saved/retry.png'}});
-  assert.equal((await retry).ok,true);assert.equal(f.current().resolvedPictogram.image,'wxfile://saved/retry.png');
-  assert.deepEqual(f.removed,[cachedPicture.image]);
+  assert.equal((await retry).ok,true);assert.equal(f.current().resolvedPictogram.image,cachedPicture.image);
+  assert.equal(f.pending.length,1);assert.deepEqual(f.removed,[]);
 });
 test('a repository that declines the review does not produce a successful confirmation',async()=>{
   const f=fixture('suggested'),before=JSON.stringify(f.current());
   f.repository.reviewMissingToken=()=>null;
   const task=f.accept(f.record.id,picture.id);f.pending[0].resolve({ok:true,value:cachedPicture});
   assert.equal((await task).ok,false);assert.equal(JSON.stringify(f.current()),before);
-  assert.deepEqual(f.removed,[cachedPicture.image]);
+  assert.deepEqual(f.removed,[]);
 });
 for(const outcome of [false,new Error('cleanup unavailable')]){
-  test(`failed cleanup (${String(outcome)}) preserves the stale-result failure`,async()=>{
+  test(`cancellation does not invoke uncertain cleanup (${String(outcome)})`,async()=>{
     const f=fixture('suggested'),task=f.accept(f.record.id,picture.id);
     f.repository.reviewMissingToken(f.record.id,{status:'ignored'});f.setCleanupResult(outcome);
     f.pending[0].resolve({ok:true,value:cachedPicture});const result=await task;
     assert.equal(result.ok,false);assert.ok(result.message.startsWith('记录或候选图已更新，请重新确认。'));
-    assert.match(result.message,/清理未完成/);assert.equal(f.current().status,'ignored');
-    assert.deepEqual(f.removed,[cachedPicture.image]);
+    assert.doesNotMatch(result.message,/清理未完成/);assert.equal(f.current().status,'ignored');
+    assert.deepEqual(f.removed,[]);
   });
 }
 test('failed reference inspection retains the file and the original failure',async()=>{
@@ -155,7 +160,13 @@ test('failed reference inspection retains the file and the original failure',asy
   f.repository.reviewMissingToken(f.record.id,{status:'ignored'});f.failReferenceCheck();
   f.pending[0].resolve({ok:true,value:cachedPicture});const result=await task;
   assert.equal(result.ok,false);assert.ok(result.message.startsWith('记录或候选图已更新，请重新确认。'));
-  assert.match(result.message,/清理未完成/);assert.deepEqual(f.removed,[]);
+  assert.doesNotMatch(result.message,/清理未完成/);assert.deepEqual(f.removed,[]);
+});
+test('privacy cleanup invalidates the late image without adopting it',async()=>{
+  const f=fixture('suggested'),before=JSON.stringify(f.current()),task=f.accept(f.record.id,picture.id);
+  invalidateImageOperations();f.pending[0].resolve({ok:true,value:cachedPicture});
+  assert.equal((await task).ok,false);assert.equal(JSON.stringify(f.current()),before);
+  assert.deepEqual(f.removed,[]);
 });
 test('a file adopted by another record is never removed during rollback',async()=>{
   const f=fixture('suggested'),task=f.accept(f.record.id,picture.id);

@@ -466,6 +466,7 @@ declare module '@cboard-communication-core/candidateFeedback' {
     sessionId: string
     outputSignature: string
     candidates: ExpressionCandidate[]
+    rejected?: boolean
     createdAt: number
     updatedAt: number
   }
@@ -623,6 +624,8 @@ declare module '@cboard-communication-core/receiverPipeline' {
   }
 
   export interface ReceiverHistoryEntry {
+    repairOfRecordId?: string
+    repairSourceSessionId?: string
     contractVersion: 1 | 2
     direction: 'receive'
     inputText: string
@@ -1138,6 +1141,8 @@ declare module '@cboard-communication-core/repository' {
   export const COMMUNICATION_REPOSITORY_SCHEMA_VERSION: number
 
   export interface CommunicationHistoryEntry {
+    repairOfRecordId?: string
+    repairSourceSessionId?: string
     contractVersion?: number
     direction: 'express' | 'receive'
     sentence?: string
@@ -1207,6 +1212,7 @@ declare module '@cboard-communication-core/repository' {
 
   export interface CommunicationSavedPhraseEntry
     extends ExpressionSavedPhraseEntry {
+    lifeContext?: string
     createdAt?: number
     baseVersion?: number
     serverVersion?: number
@@ -1231,6 +1237,9 @@ declare module '@cboard-communication-core/repository' {
   }
 
   export interface CommunicationRepository {
+    loadExpressionDraft(): import('@cboard-communication-core/expressionDraft').ExpressionDraft | null
+    clearExpressionDrafts(): void
+    writeExpressionDraft(draft: import('@cboard-communication-core/expressionDraft').ExpressionDraft, expected?: import('@cboard-communication-core/expressionDraft').ExpressionDraft | null): import('@cboard-communication-core/expressionDraft').ExpressionDraft
     appendCommunicationHistory(
       entry: CommunicationHistoryEntry
     ): CommunicationHistoryEntry
@@ -1310,7 +1319,7 @@ declare module '@cboard-communication-core/repository' {
     loadReceiverRecords(): CommunicationHistoryEntry[]
     discardResumableReceiverRecord(
       recordId: string,
-      options?: { sessionId?: string }
+      options?: { sessionId?: string; expected?: ReceiverDraftEntry }
     ): boolean
     overwriteReceiverCorrections(
       entries: ReceiverCorrectionEntry[]
@@ -1352,6 +1361,7 @@ declare module '@cboard-communication-core/repository' {
       sessionId?: string
       outputSignature: string
       candidates: import('@cboard-communication-core/candidateFeedback').ExpressionCandidate[]
+      rejected?: boolean
       createdAt?: number
     }): import('@cboard-communication-core/candidateFeedback').ExpressionCandidateFeedbackDraft | null
     savePersonalImagePreference(entry: {
@@ -1381,6 +1391,8 @@ declare module '@cboard-communication-core/accountIdentity' {
 
 declare module '@cboard-communication-core/adapters/wechatStorage' {
   export interface WechatStorageApi {
+    getScopeKey?(): string
+    prepareFavoriteCommit?(before: any, after: any): any
     getStorageSync(key: string): unknown
     setStorageSync(key: string, value: string): void
     removeStorageSync?(key: string): void

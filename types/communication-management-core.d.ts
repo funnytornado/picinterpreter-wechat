@@ -1,5 +1,6 @@
 declare module '@cboard-communication-core/repository' {
   interface CommunicationSavedPhraseEntry {
+    careSharedReadOnly?: boolean
     id?: string
     usageCount?: number
     lastUsedAt?: number
@@ -87,22 +88,17 @@ declare module '@cboard-communication-core/savedPhraseManagement' {
       maxItems?: number
       now?: () => number
     }
-  ):
-    | {
-        ok: true
-        items: CommunicationSavedPhraseEntry[]
-        addedCount: number
-        skippedCount: number
-        missingPictogramCount: number
-      }
-    | {
-        ok: false
-        error: string
-        items: CommunicationSavedPhraseEntry[]
-        addedCount: 0
-        skippedCount: 0
-        missingPictogramCount: 0
-      }
+  ): SavedPhraseImportResult
+  export interface SavedPhraseImportResult {
+    ok: boolean; error?: string; message?: string; committed?: boolean; refreshed?: boolean
+    items: CommunicationSavedPhraseEntry[]; addedCount: number; skippedCount: number; missingPictogramCount: number
+    wouldAddCount?: number; availableSlots?: number; capacityExceeded?: boolean; duplicateCount?: number; invalidCount?: number
+  }
+  export function createSavedPhraseImportService(options: {
+    repository: import('@cboard-communication-core/repository').CommunicationRepository
+    getScopeKey?: () => string; availableTileIds?: Set<string>; resolveTile?: (id: string) => TileDTO | null; now?: () => number
+  }): { preview(input: string | Record<string, unknown>): SavedPhraseImportResult; commit(): SavedPhraseImportResult; cancel(): void }
+
 }
 
 declare module '@cboard-communication-core/historyManagement' {

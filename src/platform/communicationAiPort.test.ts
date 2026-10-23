@@ -4,6 +4,16 @@ import { buildCommunicationAiSentenceRequest, normalizeResegmentResponse } from 
 import { buildPersonalPictogramTileDTO } from '@cboard-communication-core/pictogramMetadataSuggestion'
 import { createCommunicationAiPort } from './communicationAiPort'
 
+test('explains semantic rejection without suggesting that the network is unavailable', async () => {
+  const request = vi.fn(async () => ({ statusCode: 502, data: { error: { code: 'AI_SENTENCE_MEANING_MISMATCH' } } }))
+  const port = createCommunicationAiPort({ apiBaseUrl: 'https://synthetic.invalid/api', getAuthToken: () => 'synthetic-token', request })
+  const result = await port.generateSentences({ pictogramLabels: ['我', '痛'] })
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('原意')
+  expect(result.message).toContain('不会自动再次生成')
+  expect(request).toHaveBeenCalledTimes(1)
+})
+
 function createHarness(options: { apiBaseUrl?: string; token?: string } = {}) {
   const request = vi.fn(async ({ url }: { url: string }) => {
     if (url.endsWith('/usage')) {

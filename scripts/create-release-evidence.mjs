@@ -20,7 +20,7 @@ const projectRoot = path.resolve(
 )
 
 export const RELEASE_CAPABILITY_KEYS = [
-  'releaseChannel', 'cloudFeatures', 'aiFeatures', 'ocr',
+  'releaseChannel', 'cloudFeatures', 'aiFeatures', 'textAiFeatures', 'ocr',
   'onlinePictograms', 'dialectAsr', 'careCollaboration',
   'accountClosure', 'publicTrial'
 ]

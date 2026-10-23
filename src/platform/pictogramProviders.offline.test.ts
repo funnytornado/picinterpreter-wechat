@@ -18,7 +18,7 @@ describe.each(['arasaac','globalsymbols','opensymbols',...(liveFixture?['provide
     const request=vi.fn(async()=>({statusCode:200,data:{results:[{token,pictogram:candidate}]}}))
     const downloadFile=vi.fn(async()=>({statusCode:200,tempFilePath:'temp.png'}))
     const saveFile=vi.fn(async()=>({savedFilePath:`wxfile://saved/${provider}.png`}))
-    const port=createPictogramSearchPort({apiBaseUrl:'https://api.example.test/api',request,downloadFile,saveFile})
+    const port=createPictogramSearchPort({verifyImage: async () => ({status: 'available'}),apiBaseUrl:'https://api.example.test/api',request,downloadFile,saveFile})
     const values=new Map<string,unknown>()
     const storage={getStorageSync:(key:string)=>values.get(key)??'',setStorageSync:(key:string,value:unknown)=>{values.set(key,value)},removeStorageSync:(key:string)=>{values.delete(key)}}
     const repo=createWechatCommunicationRepository(storage)

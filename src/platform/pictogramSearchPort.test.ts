@@ -62,7 +62,7 @@ function createHarness(apiBaseUrl = 'https://api.example.test') {
     request,
     downloadFile,
     saveFile,
-    port: createPictogramSearchPort({
+    port: createPictogramSearchPort({verifyImage: async () => ({status: 'available'}),
       apiBaseUrl,
       request,
       downloadFile,

@@ -25,6 +25,8 @@ function createRepository(): CommunicationRepository {
   ]
 
   return {
+    loadCommunicationIdentity: () => ({workspaceId: "synthetic", patientId: "synthetic"}),
+    savedPhraseCapacity: 100,
     loadCommunicationSavedPhrases: () => savedPhrases,
     overwriteCommunicationSavedPhrases: items => {
       savedPhrases = items
@@ -52,6 +54,28 @@ function createRepository(): CommunicationRepository {
 }
 
 describe('WeChat communication management service', () => {
+  test('two-phase import preserves existing phrases, refreshes stale previews and keeps retry safe', () => {
+    const repository = createRepository()
+    let scope = 'one'
+    const service = createCommunicationManagementService({ repository, boards: DEFAULT_BOARD_FIXTURES, getScopeKey: () => scope })
+    const payload = JSON.stringify({format:'cboard-communication-saved-phrases',version:1,phrases:[{id:'new',sentence:'合成新句',output:[]}]})
+    expect(service.previewSavedPhrases(payload).wouldAddCount).toBe(1)
+    expect(repository.loadCommunicationSavedPhrases()).toHaveLength(0)
+    repository.overwriteCommunicationSavedPhrases([{id:'old',sentence:'合成旧句',output:[]}] as any)
+    expect(service.confirmSavedPhrasesImport().refreshed).toBe(true)
+    const write = repository.overwriteCommunicationSavedPhrases
+    repository.overwriteCommunicationSavedPhrases = () => { throw new Error('synthetic full') }
+    expect(() => service.confirmSavedPhrasesImport()).toThrow('synthetic full')
+    repository.overwriteCommunicationSavedPhrases = write
+    expect(service.confirmSavedPhrasesImport().committed).toBe(true)
+    expect(repository.loadCommunicationSavedPhrases()).toHaveLength(2)
+    expect(service.previewSavedPhrases(payload).duplicateCount).toBe(1)
+    service.cancelSavedPhrasesImport()
+    expect(() => service.confirmSavedPhrasesImport()).toThrow(/预览/)
+    service.previewSavedPhrases(payload)
+    scope = 'two'
+    expect(() => service.confirmSavedPhrasesImport()).toThrow(/档案/)
+  })
   test('favorites the corrected receiver image snapshot independently', () => {
     const repository = createRepository()
     repository.overwriteCommunicationHistory([{

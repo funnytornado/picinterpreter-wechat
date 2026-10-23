@@ -3,6 +3,10 @@ import Taro from '@tarojs/taro'
 import { buildCommunicationAiSentenceRequest } from '@cboard-communication-core/communicationAi'
 import { buildPersonalPictogramTileDTO } from '@cboard-communication-core/pictogramMetadataSuggestion'
 import { createTaroCommunicationAiPort } from './taroCommunicationAiPort'
+import { createExpressionSession, expressionSessionReducer, restoreExpressionSession } from '../features/communication/session'
+import { buildExpressionHistoryEntry } from '@cboard-communication-core/expressionPipeline'
+import { createWechatCommunicationRepository } from './communicationRepository'
+import { createExpressionDraftService, attachExpressionDraftRequest } from '@cboard-communication-core/expressionDraft'
 
 const h = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
@@ -60,6 +64,68 @@ beforeEach(async () => {
   startCareWorkspace()
 })
 afterEach(() => vi.unstubAllEnvs())
+
+test('draft write fails before dispatch and cold replay preserves anonymous wire and original funding', async () => {
+  const values = new Map<string, unknown>()
+  let fail = false
+  const storage = { getStorageSync: (key: string) => values.get(key) ?? '',
+    setStorageSync: (key: string, value: unknown) => { if (fail) throw new Error('draft write failed'); values.set(key, value) },
+    removeStorageSync: (key: string) => values.delete(key) }
+  const repository = createWechatCommunicationRepository(storage)
+  const makeDraft = () => createExpressionDraftService({ repository })
+  const output = [buildPersonalPictogramTileDTO({ id: 'private-a', boardId: 'private',
+    category: 'people', label: '合成林安', image: 'synthetic-private://photo' })]
+  const draft = makeDraft()
+  draft.save({ pipeline: createExpressionSession(output).pipeline })
+  const make = (service: any, scene: string) => attachExpressionDraftRequest(
+    buildCommunicationAiSentenceRequest({ output, scene }), service)
+  fail = true
+  expect(await createTaroCommunicationAiPort().generateSentences(make(draft, '吃饭'))).toMatchObject({
+    ok: false, code: 'EXPRESSION_DRAFT_STORAGE_FAILED', message: expect.stringContaining('保存到本机')
+  })
+  expect(h.transport).not.toHaveBeenCalled()
+  fail = false
+  h.transport.mockRejectedValueOnce(new Error('request:fail timeout'))
+  expect((await createTaroCommunicationAiPort().generateSentences(make(draft, '吃饭'))).code).toBe('AI_REQUEST_RESULT_UNKNOWN')
+  const cold = makeDraft(); cold.load()
+  h.transport.mockImplementation(async (params: any) => ({ statusCode: 200, data: { candidates: ['⟦P1⟧'] }, params }))
+  const restored = await createTaroCommunicationAiPort().generateSentences(make(cold, '过期场景'))
+  expect(restored.ok && restored.value.candidates).toEqual(['合成林安'])
+  expect(requestKey(0)).toBe(requestKey(1))
+  expect(h.transport.mock.calls[0][0].data).toEqual(h.transport.mock.calls[1][0].data)
+  expect(JSON.stringify(h.transport.mock.calls)).not.toMatch(/合成林安|synthetic-private|private-a|personId|beforeDispatch|afterResponse/)
+  h.values.set('care-funding-v1:synthetic-a:profile-synthetic-a', 'other-funding')
+  expect((await createTaroCommunicationAiPort().generateSentences(make(cold, '吃饭'))).code).toBe('AI_REQUEST_CONTEXT_CHANGED')
+  expect(h.transport).toHaveBeenCalledTimes(2)
+})
+
+test('recovered same-name person stays selected after meaning screening, confirmation and offline storage reopen', async () => {
+  const people = ['person-a', 'person-b'].map(id => buildPersonalPictogramTileDTO({ id, boardId: 'private',
+    category: 'people', label: '林知岚', image: `synthetic-private://${id}` }))
+  const output = [people[1], { id: 'pain', boardId: 'private', label: '痛', image: '/synthetic-pain.png' }]
+  const make = () => buildCommunicationAiSentenceRequest({ output })
+  h.transport.mockRejectedValueOnce(new Error('request:fail timeout'))
+  h.transport.mockImplementation(async (params: any) => ({ statusCode: 200,
+    data: { candidates: ['⟦P1⟧现在很痛。', '⟦P1⟧痛。'] }, params }))
+  expect((await createTaroCommunicationAiPort().generateSentences(make())).code).toBe('AI_REQUEST_RESULT_UNKNOWN')
+  const retry = await createTaroCommunicationAiPort().generateSentences(make())
+  expect(retry.ok).toBe(true)
+  let state = expressionSessionReducer(createExpressionSession(output), { type: 'apply-ai-candidates', response: retry.value! })
+  expect(state.pipeline.candidateSentences).toEqual(['林知岚痛。', '我的意思是：林知岚痛。', '我想表达的是：林知岚痛。'])
+  state = expressionSessionReducer(state, { type: 'select-candidate', index: 1 })
+  expect(requestKey(0)).toBe(requestKey(1))
+  expect(JSON.stringify(h.transport.mock.calls)).not.toMatch(/林知岚|synthetic-private|person-b|image/)
+  const storage = { getStorageSync: (key: string) => h.values.get(key) ?? '',
+    setStorageSync: (key: string, value: unknown) => h.values.set(key, value), removeStorageSync: (key: string) => h.values.delete(key) }
+  createWechatCommunicationRepository(storage).appendCommunicationHistory(buildExpressionHistoryEntry(state.pipeline)!)
+  h.transport.mockRejectedValue(new Error('offline'))
+  const history = createWechatCommunicationRepository(storage).loadCommunicationHistory()
+  const restored = restoreExpressionSession([{ id: 'private', name: '合成图库', tiles: [...people, output[1]] }], history)
+  expect(restored.selectedTiles[0].id).toBe('person-b')
+  expect(restored.selectedTiles[0].image).toBe('synthetic-private://person-b')
+  expect(restored.pipeline.candidateSentences[0]).toBe('我的意思是：林知岚痛。')
+  expect(h.transport).toHaveBeenCalledTimes(2)
+})
 
 test('local person identities survive timeout retries while only anonymous markers reach Taro', async () => {
   const make = (id: string) => buildCommunicationAiSentenceRequest({ output: [buildPersonalPictogramTileDTO({ id, boardId: 'private', category: 'people', label: '林知岚', image: `synthetic-private://${id}` })] })

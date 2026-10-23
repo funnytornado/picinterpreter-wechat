@@ -79,6 +79,9 @@ export interface ReceiverWorkspaceResumeState {
   activeDraft: ReceiverDraftEntry | null
   learnFromCorrections: boolean
   notice: string
+  repairRequested?: boolean
+  repairSource?: ReceiverDraftEntry | null
+  repairEditing?: boolean
 }
 
 export interface ReceiverDisplayCloseResult {
@@ -136,6 +139,9 @@ export function createReceiverWorkspaceResumeState(
       outputPreview: value.session.outputPreview.slice(),
       quality: { ...value.session.quality }
     },
+    repairRequested: value.repairRequested,
+    repairSource: value.repairSource,
+    repairEditing: value.repairEditing,
     segmentationDraft: String(value.segmentationDraft || ''),
     activeDraft: value.activeDraft,
     learnFromCorrections: Boolean(value.learnFromCorrections),
@@ -193,6 +199,11 @@ export function resumeReceiverWorkspaceAfterDisplay(
 
   return {
     ...createReceiverWorkspaceResumeState(state),
+    ...(result.feedback === 'not_understood' ? {
+      repairRequested: true, repairSource: state.activeDraft, repairEditing: false
+    } : result.feedback === 'understood' ? {
+      repairRequested: false, repairSource: null, repairEditing: false
+    } : {}),
     notice
   }
 }

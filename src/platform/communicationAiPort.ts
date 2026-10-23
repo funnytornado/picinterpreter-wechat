@@ -1,3 +1,4 @@
+import { getExpressionDraftRequestContext } from '@cboard-communication-core/expressionDraft'
 import type { ConversationScene } from '@cboard-communication-core/conversationSession'
 import {
   normalizeResegmentResponse,
@@ -146,12 +147,15 @@ function responseErrorCode(data: unknown): string {
 
 interface CommunicationAiDependencies {
   apiBaseUrl: string
+  // Undefined preserves legacy callers; an explicit empty URL disables text AI.
+  textApiBaseUrl?: string
   getAuthToken: () => string
   request: (options: {
     url: string
     method: 'GET' | 'POST'
     data?: Record<string, unknown>
     localIdentity?: string
+    draftContext?: any
     header: Record<string, string>
   }) => Promise<RequestResult>
 }
@@ -186,13 +190,19 @@ function normalizeList(values: string[] | undefined, maxItems: number, maxLength
 }
 
 function getErrorMessage(statusCode: number, responseData: unknown) {
+  const code = responseErrorCode(responseData)
+  if (code) {
+    const known = careErrorMessage({ code, message: '' })
+    if (known !== careErrorMessage({ message: '' })) return known
+  }
   const limitMessage = getCommunicationEnhancementLimitMessage(
     statusCode,
     responseData,
     '已继续使用本地规则。'
   )
   if (limitMessage) return limitMessage
-  if (statusCode === 401 || statusCode === 403) return '登录已失效，请重新登录后使用 AI。'
+  if (statusCode === 401) return '登录已失效，请重新登录后使用 AI。'
+  if (statusCode === 403) return '当前账号没有使用此 AI 服务的权限，请核对档案与额度授权。'
   if (statusCode === 503) return '服务端尚未配置 AI，已继续使用本地规则。'
   return 'AI 服务暂时不可用，已继续使用本地规则。'
 }
@@ -242,15 +252,21 @@ export function createCommunicationAiPort(
   dependencies: CommunicationAiDependencies
 ): CommunicationAiPort {
   const apiBaseUrl = normalizeBaseUrl(dependencies.apiBaseUrl)
-  const configured = hasHttpOrigin(apiBaseUrl)
+  const textApiBaseUrl = normalizeBaseUrl(dependencies.textApiBaseUrl === undefined
+    ? dependencies.apiBaseUrl : dependencies.textApiBaseUrl)
+  const configured = hasHttpOrigin(textApiBaseUrl)
 
   async function requestAuthenticated(
     path: string,
     method: 'GET' | 'POST',
     data?: Record<string, unknown>,
-    localIdentity?: string
+    localIdentity?: string,
+    draftContext?: any
   ): Promise<CommunicationAiResult<unknown>> {
-    if (!configured) {
+    const textOperation = ['/gpt/communication/sentences', '/gpt/communication/resegment',
+      '/gpt/communication/health', '/gpt/communication/usage'].includes(path)
+    const requestBaseUrl = textOperation ? textApiBaseUrl : apiBaseUrl
+    if (!hasHttpOrigin(requestBaseUrl)) {
       return { ok: false, message: 'AI 服务尚未配置，已继续使用本地规则。' }
     }
 
@@ -261,10 +277,11 @@ export function createCommunicationAiPort(
 
     try {
       const response = await dependencies.request({
-        url: apiBaseUrl + path,
+        url: requestBaseUrl + path,
         method,
         data,
         ...(localIdentity ? { localIdentity } : {}),
+        ...(draftContext ? { draftContext } : {}),
         header: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
@@ -281,6 +298,9 @@ export function createCommunicationAiPort(
       }
       return { ok: true, message: 'AI 增强已完成。', value: response.data }
     } catch (error: any) {
+      if (typeof error?.code === 'string' && error.code.startsWith('EXPRESSION_DRAFT_')) {
+        return { ok: false, code: error.code, message: error.message || '表达草稿未能可靠保存到本机，未发起 AI 请求。' }
+      }
       // The transport records an uncertain attempt before returning its stable
       // code. Do not turn it into a fresh paid call or discard that distinction.
       if (['AI_REQUEST_STORAGE_UNAVAILABLE', 'AI_REQUEST_CONTEXT_CHANGED',
@@ -297,7 +317,7 @@ export function createCommunicationAiPort(
 
     async health() {
       const result = await requestAuthenticated('/gpt/communication/health', 'GET')
-      if (!result.ok) return { ok: false, message: result.message }
+      if (!result.ok) return { ok: false, message: result.message, code: result.code, status: result.status }
 
       const raw = result.value as Record<string, unknown>
       const speechVoice = String(raw.speechVoice || '').trim().slice(0, 80)
@@ -372,7 +392,7 @@ export function createCommunicationAiPort(
 
     async usage() {
       const result = await requestAuthenticated('/gpt/communication/usage', 'GET')
-      if (!result.ok) return { ok: false, message: result.message }
+      if (!result.ok) return { ok: false, message: result.message, code: result.code, status: result.status }
 
       const raw = result.value as Record<string, unknown>
       const month = String(raw.month || '').trim()
@@ -456,7 +476,7 @@ export function createCommunicationAiPort(
             ),
             ...(input.context?.scene || input.scene ? { scene: input.context?.scene || input.scene } : {})
           }
-        }, localIdentity
+        }, localIdentity, getExpressionDraftRequestContext(input)
       )
       if (!result.ok) return { ok: false, message: result.message,
         ...(result.code ? { code: result.code } : {}),

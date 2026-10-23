@@ -14,6 +14,10 @@ import {
 } from '@cboard-communication-core/expressionPipeline'
 import type { BoardDTO, TileDTO } from '@cboard-communication-core/dto'
 import type { CommunicationHistoryEntry } from '@cboard-communication-core/repository'
+import {
+  normalizeExpressionDraftSnapshot,
+  type ExpressionDraftSnapshot
+} from '@cboard-communication-core/expressionDraft'
 
 export const MAX_EXPRESSION_TILES = 12
 // Match CBoard's bounded, memory-only output undo history.
@@ -54,6 +58,19 @@ export function createExpressionSession(
     selectedTiles: output,
     pipeline: buildExpressionLoopState(output),
     restored
+  }
+}
+
+export function createExpressionSessionFromDraft(
+  value: ExpressionDraftSnapshot
+): ExpressionSessionState {
+  const snapshot = normalizeExpressionDraftSnapshot(value)
+  // A local reviewed snapshot owns both ordered identity and its sentence.
+  // Never resolve its duplicate IDs through today's library or restore undo.
+  return {
+    selectedTiles: JSON.parse(JSON.stringify(snapshot.pipeline.outputSnapshot)),
+    pipeline: snapshot.pipeline,
+    restored: true
   }
 }
 
@@ -119,17 +136,12 @@ export function restoreExpressionSession(
 }
 
 export function createExpressionSessionFromSavedPhrase(
-  boardOrBoards: BoardDTO | BoardDTO[],
+  _boardOrBoards: BoardDTO | BoardDTO[],
   entry: ExpressionSavedPhraseEntry
 ): ExpressionSessionState {
-  const selectedTiles = resolveCurrentExpressionTiles(
-    boardOrBoards,
-    entry.output
-  )
-
-  if (!selectedTiles.length) {
-    return createExpressionSession()
-  }
+  // A reviewed favorite owns ordered snapshots, including same-ID people and
+  // text-only entries. Re-resolving by library ID would silently change identity.
+  const selectedTiles: TileDTO[] = JSON.parse(JSON.stringify(entry.output || []))
 
   return {
     selectedTiles,
@@ -220,7 +232,8 @@ export function expressionSessionReducer(
         : rebuildSession(selectedTiles)
     }
     case 'clear':
-      return state.selectedTiles.length ? rememberDeletion(state, []) : state
+      return state.selectedTiles.length || state.pipeline.candidateSentences.length
+        ? rememberDeletion(state, []) : state
     case 'undo-delete': {
       const history = state.undoHistory || []
       if (!history.length) return state

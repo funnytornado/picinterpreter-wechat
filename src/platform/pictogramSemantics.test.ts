@@ -1,3 +1,4 @@
+// Semantic tests use an explicit decoder fixture; native file/decode checks have separate tests.
 import { describe, expect, it, vi } from 'vitest'
 import { createArasaacPictogramSearchPort } from './arasaacPictogramSearchPort'
 import { createPictogramSearchPort } from './pictogramSearchPort'
@@ -11,7 +12,7 @@ describe('shared pictogram meanings on WeChat', () => {
   })
   it('preserves original meaning through direct-provider search and local file caching', async () => {
     const request=vi.fn(async()=>({statusCode:200,data:[{_id:999999,keywords:[{keyword:'停车场',meaning:'车辆停放地点'}],categories:['transport']}]}))
-    const port=createArasaacPictogramSearchPort({request,
+    const port=createArasaacPictogramSearchPort({verifyImage:async()=>({status:'available'}),request,
       downloadFile:async()=>({statusCode:200,tempFilePath:'tmp.png'}),
       saveFile:async()=>({savedFilePath:'wxfile://park.png'})})
     const rejected=await port.search(['公园'])
@@ -25,12 +26,12 @@ describe('shared pictogram meanings on WeChat', () => {
     expect(JSON.parse(JSON.stringify(cached.value)).semantics.sourceDefinitions).toEqual(['车辆停放地点'])
   })
   it('API adapter keeps the same metadata and does not replace it during download', async()=>{
-    const direct=createArasaacPictogramSearchPort({
+    const direct=createArasaacPictogramSearchPort({verifyImage:async()=>({status:'available'}),
       request:async()=>({statusCode:200,data:[{_id:999999,keywords:[{keyword:'停车场'}]}]}),
       downloadFile:async()=>({statusCode:200,tempFilePath:'tmp'}),saveFile:async()=>({savedFilePath:'saved'})})
     const directResult=await direct.search(['停车场'])
     const raw=directResult.value![0].pictogram
-    const api=createPictogramSearchPort({apiBaseUrl:'https://api.example.test',
+    const api=createPictogramSearchPort({verifyImage:async()=>({status:'available'}),apiBaseUrl:'https://api.example.test',
       request:async()=>({statusCode:200,data:{results:[{token:'停车场',pictogram:{...raw,image:'/pictograms/arasaac/999999/image'}}]}}),
       downloadFile:async()=>({statusCode:200,tempFilePath:'tmp'}),saveFile:async()=>({savedFilePath:'wxfile://saved.png'})})
     const result=await api.search(['停车场'])
@@ -38,7 +39,7 @@ describe('shared pictogram meanings on WeChat', () => {
     expect(cached.value?.semantics).toEqual(raw.semantics)
   })
   it('does not invent meaning provenance when caching a legacy candidate', async()=>{
-    const port=createArasaacPictogramSearchPort({
+    const port=createArasaacPictogramSearchPort({verifyImage:async()=>({status:'available'}),
       request:async()=>({statusCode:200,data:[]}),
       downloadFile:async()=>({statusCode:200,tempFilePath:'tmp'}),
       saveFile:async()=>({savedFilePath:'wxfile://saved.png'})})

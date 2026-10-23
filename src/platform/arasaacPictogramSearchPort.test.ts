@@ -19,7 +19,7 @@ function createHarness() {
     request,
     downloadFile,
     saveFile,
-    port: createArasaacPictogramSearchPort({
+    port: createArasaacPictogramSearchPort({verifyImage: async () => ({status: 'available'}),
       request,
       downloadFile,
       saveFile
@@ -35,7 +35,7 @@ describe('ARASAAC pictogram search port', () => {
         {_id:30117,keywords:[{keyword:'oral medication'},{keyword:'take medicines'}]}
       ]}))
     const downloadFile=vi.fn(async()=>({statusCode:200,tempFilePath:'tmp.png'}))
-    const port=createArasaacPictogramSearchPort({request,downloadFile,saveFile:async()=>({savedFilePath:'wxfile://saved/medicine.png'})})
+    const port=createArasaacPictogramSearchPort({verifyImage: async () => ({status: 'available'}),request,downloadFile,saveFile:async()=>({savedFilePath:'wxfile://saved/medicine.png'})})
     const result=await port.search(['吃药'])
     expect(request.mock.calls.map(([x])=>decodeURIComponent(x.url).split('/v1/')[1])).toEqual([
       'pictograms/zh/bestsearch/吃药','pictograms/zh/search/吃药','pictograms/en/bestsearch/take medicines'
@@ -50,7 +50,7 @@ describe('ARASAAC pictogram search port', () => {
   })
   test('distinguishes no matches from outage, without inventing an object substitute', async () => {
     const request=vi.fn(async()=>({statusCode:404,data:[]}))
-    const port=createArasaacPictogramSearchPort({request,downloadFile:vi.fn(),saveFile:vi.fn()})
+    const port=createArasaacPictogramSearchPort({verifyImage: async () => ({status: 'available'}),request,downloadFile:vi.fn(),saveFile:vi.fn()})
     expect(await port.search(['回家'])).toEqual({ok:true,message:'暂时没有找到合适图片。',value:[]})
     // Two exact-language lookups plus the two bounded, audited semantic queries.
     expect(request).toHaveBeenCalledTimes(8)

@@ -12,8 +12,7 @@ import type { MissingTokenRecord } from '@cboard-communication-core/repository'
 import {
   DEVICE_PRIVATE_RUNTIME_PICTOGRAM_PROVIDER,
   buildAiGeneratedRuntimePictogram,
-  buildDevicePrivateRuntimePictogram,
-  getRuntimePictogramStorageState
+  buildDevicePrivateRuntimePictogram
 } from '@cboard-communication-core/runtimePictogram'
 import {
   buildCommunicationTileCatalog,
@@ -22,11 +21,12 @@ import {
 
 import type { RuntimePictogram } from '../../platform/pictogramSearchPort'
 import { resolveTrustedImageUrl } from '../../platform/pictogramSearchPort'
-import { apiBaseUrlFor } from '../../config/runtimeCapabilities'
+import { apiBaseUrlFor, runtimeCapabilities } from '../../config/runtimeCapabilities'
 import { taroCommunicationAiPort } from '../../platform/taroCommunicationAiPort'
 import { saveBase64PngToUserData } from '../../platform/taroBase64ImageFile'
 import { taroPersonalImagePort } from '../../platform/taroPersonalImagePort'
 import PictogramImage from '../../components/PictogramImage'
+import ImageAvailabilityLabel from '../../components/ImageAvailabilityLabel'
 
 export interface MissingTokenReview {
   status: 'new' | 'suggested' | 'ignored' | 'resolved'
@@ -94,15 +94,6 @@ function isDevicePrivateResolution(record: MissingTokenRecord) {
   )
 }
 
-function getManagedResolutionImage(record: MissingTokenRecord) {
-  const resolvedPictogram = record.resolvedPictogram
-  if (!resolvedPictogram) return ''
-
-  const isOnlineResolution = String(record.source || '').startsWith('online:')
-  return isDevicePrivateResolution(record) || isOnlineResolution
-    ? resolvedPictogram.image
-    : ''
-}
 
 export default function MissingTokenQueue({
   boards,
@@ -245,7 +236,8 @@ export default function MissingTokenQueue({
         })
       )
       if (!saved) {
-        await taroPersonalImagePort.remove(selected.image)
+        // A failed receipt can follow a successful write. Do not delete bytes
+        // that a saved snapshot may already reference.
         setNotice('图片已选择，但本机词图关联保存失败，请稍后重试。')
         return
       }
@@ -261,26 +253,8 @@ export default function MissingTokenQueue({
   }
 
   const restorePendingRecord = async (record: MissingTokenRecord) => {
-    const privateResolution = isDevicePrivateResolution(record)
-    const managedImage = getManagedResolutionImage(record)
     const saved = applyReview(record.id, { status: 'new' })
-    if (!saved || !managedImage) return
-
-    const removed = await taroPersonalImagePort.remove(managedImage)
-    if (privateResolution) {
-      setNotice(
-        removed
-          ? '本机私图关联和图片文件已移除，可重新选择处理方式。'
-          : '本机私图关联已移除；旧图片文件清理失败，但不会再用于沟通。'
-      )
-      return
-    }
-
-    setNotice(
-      removed
-        ? '在线图片缓存和关联已移除，可重新选择处理方式。'
-        : '在线图片关联已移除；旧缓存文件清理失败，但不会再用于沟通。'
-    )
+    if (saved) setNotice('已恢复待处理；原图片文件保留，已有收藏和历史不受影响。')
   }
 
   const searchOnline = async (recordIds: string[]) => {
@@ -485,12 +459,8 @@ export default function MissingTokenQueue({
                       <View>
                         <PictogramImage className='missing-queue__online-image' src={onlineResolution.image} label={onlineResolution.label} />
                         <Text className='missing-queue__meta'>
-                        {getRuntimePictogramStorageState(onlineResolution) === 'embedded'
-                          ? '图片已保存到本机，可离线复用'
-                          : getRuntimePictogramStorageState(onlineResolution) === 'local-file'
-                            ? '已有本机图片文件；请核对上方图片能否显示'
-                            : '尚未确认离线可用，请联网重新保存图片'}
-                        </Text>
+                        <ImageAvailabilityLabel source={onlineResolution.image} />
+                          </Text>
                       </View>
                     )}
                   {record.status === 'resolved' &&
@@ -564,10 +534,10 @@ export default function MissingTokenQueue({
                       <Button
                         id={`missing-token-generate-ai-${record.id}`}
                         className='missing-queue__action'
-                        disabled={isBusy}
+                        disabled={isBusy || !runtimeCapabilities.aiFeatures}
                         onClick={() => void generateAiPictogram(record)}
                       >
-                        {isBusy ? '正在处理' : 'AI 生成图符'}
+                        {isBusy ? '正在处理' : runtimeCapabilities.aiFeatures ? 'AI 生成图符' : '本版本未开放 AI 生图'}
                       </Button>
                       {onlineSearchReady && (
                         <Button

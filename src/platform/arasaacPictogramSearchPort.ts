@@ -1,3 +1,4 @@
+import { currentImageOperationEpoch } from '@cboard-communication-core/imageOperationEpoch'
 import { getReviewedArasaacIds } from '@cboard-communication-core/reviewedArasaac'
 import { buildArasaacSemanticFields, normalizePictogramSemantics, rankPictogramCandidates, getConceptEnglishQuery, getSemanticCandidateQueries } from '@cboard-communication-core/pictogramSemantics'
 
@@ -23,6 +24,7 @@ interface ArasaacSaveResult {
 }
 
 interface ArasaacPictogramSearchDependencies {
+  verifyImage?: (source: string) => Promise<{ status: string }>
   request: (options: {
     url: string
     method: 'GET'
@@ -275,6 +277,7 @@ export function createArasaacPictogramSearchPort(
     },
 
     async cache(pictogram) {
+      const epoch = currentImageOperationEpoch()
       const normalized = normalizeTrustedCandidate(pictogram)
       if (!normalized) {
         return { ok: false, message: '候选图片来源无效，未保存。' }
@@ -299,6 +302,11 @@ export function createArasaacPictogramSearchPort(
           return { ok: false, message: '候选图片无法保存到本机。' }
         }
 
+        if (!dependencies.verifyImage || (await dependencies.verifyImage(saved.savedFilePath)).status !== 'available') {
+          return { ok: false, message: '图片文件未通过本机读取和解码核验，尚未采用，请重试。' }
+        }
+
+        if (epoch !== currentImageOperationEpoch()) return { ok: false, message: '操作范围已变化，图片未采用。' }
         return {
           ok: true,
           message: '图片已确认并保存到本机。',

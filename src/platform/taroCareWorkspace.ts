@@ -1,3 +1,4 @@
+import { createTaroFavoriteStateStore } from './taroFavoriteLocalFileStorage'
 import Taro from '@tarojs/taro'
 import { useEffect, useRef } from 'react'
 import { createCareSync } from '@cboard-communication-core/careSync'
@@ -98,7 +99,7 @@ function project(
       const repository = createTaroCommunicationRepository()
       const kind = currentCareContext()?.selection?.relationship?.role === 'patient' ? 'favorite' : 'personalFavorite'
       const favorites = Object.values(snapshot.resources).filter((r: any) => !r.deleted && r.kind === kind)
-      if (!Taro.getStorageSync(careScopedKey('care-pending-favorites'))) repository.overwriteCommunicationSavedPhrases(preserveCareLocalFavoriteMedia(favorites.map((r: any) => ({ ...decodeCareMedia(r.value, snapshot.media, image), id: r.id, createdAt: r.value.createdAt || r.updatedAt || 1 })), repository.loadCommunicationSavedPhrases(), expectedContext, current || expectedContext))
+      if (!createTaroFavoriteStateStore().read().pending) repository.overwriteCommunicationSavedPhrases(preserveCareLocalFavoriteMedia(favorites.map((r: any) => ({ ...decodeCareMedia(r.value, snapshot.media, image), id: r.id, createdAt: r.value.createdAt || r.updatedAt || 1 })), repository.loadCommunicationSavedPhrases(), expectedContext, current || expectedContext))
       const preferences = snapshot.resources['preference:personalImagePreferences']
       if (preferences && !preferences.deleted && !Taro.getStorageSync(careScopedKey('care-pending-personalImagePreferences'))) repository.overwritePersonalImagePreferences(decodeCareMedia(preferences.value.value, snapshot.media, image))
     })
@@ -130,11 +131,12 @@ export async function synchronizeCareWorkspace(options: { localOnly?: boolean; a
         await queueCareBoards(engine, JSON.parse(String(raw)), readImage)
         if (Taro.getStorageSync(scoped('care-pending-boards')) === raw) Taro.removeStorageSync(scoped('care-pending-boards'))
       }
-      const favoriteKey = scoped('care-pending-favorites')
-      const favorites = Taro.getStorageSync(favoriteKey)
+      const favoriteStore = createTaroFavoriteStateStore()
+      const favoriteSnapshot = favoriteStore.read()
+      const favorites = favoriteSnapshot.pending
       if (favorites) {
         const kind = context.selection?.relationship?.role === 'patient' ? 'favorite' : 'personalFavorite'
-        const packet = JSON.parse(String(favorites))
+        const packet = favorites
         const items = Array.isArray(packet) ? packet : packet.items
         const base = Array.isArray(packet) ? undefined : packet.base
         for (const item of items) {
@@ -146,7 +148,15 @@ export async function synchronizeCareWorkspace(options: { localOnly?: boolean; a
         }
         const ids = new Set(items.map((item: any) => item.id))
         for (const r of Object.values(engine.view().resources) as any[]) if (r.kind === kind && !r.deleted && !ids.has(r.id) && (!base || base.some((entry: any) => entry.id === r.id))) await engine.edit(kind, r.id, null, 'delete')
-        if (Taro.getStorageSync(favoriteKey) === favorites) Taro.removeStorageSync(favoriteKey)
+        // Verify the existing sync engine's persisted receipt before releasing
+        // the source packet. A queued in-memory edit is not a durable handoff.
+        const receipt = await runtime.storage.get(`care-v1:${context.accountId}:${context.familyId}:${context.profileId}`)
+        if (!receipt || JSON.stringify(JSON.parse(receipt)) !== JSON.stringify(engine.archive())) {
+          throw new Error('收藏已保存到本机，同步待办交接尚未核对，请稍后重试同步。')
+        }
+        if (JSON.stringify(favoriteStore.read()) === JSON.stringify(favoriteSnapshot)) {
+          favoriteStore.commit(favoriteSnapshot, { pending: null })
+        }
       }
       const prefKey = scoped('care-pending-personalImagePreferences')
       const prefs = Taro.getStorageSync(prefKey)

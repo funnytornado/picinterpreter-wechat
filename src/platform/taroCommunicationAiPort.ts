@@ -4,7 +4,7 @@ import { createCareAiRequestJournal } from '@cboard-communication-core/careAiReq
 import { apiBaseUrlFor } from '../config/runtimeCapabilities'
 import { createCommunicationAiPort } from './communicationAiPort'
 import { taroCboardSessionStore } from './taroCboardAccountPort'
-import { currentCareContext } from './taroCareContext'
+import { careScopedKey, currentCareContext } from './taroCareContext'
 
 interface FrozenCareAiScope {
   origin: string
@@ -16,7 +16,7 @@ interface FrozenCareAiScope {
 }
 
 const safeError = (code: string) => Object.assign(new Error(code), { code })
-const aiBase = () => String(apiBaseUrlFor('aiFeatures') || '').trim().replace(/\/+$/, '')
+const aiBase = () => String(apiBaseUrlFor('textAiFeatures') || '').trim().replace(/\/+$/, '')
 
 // Captured only for the in-process request, never written to the journal or
 // sent as a request header/body. The normal Authorization header remains used.
@@ -26,6 +26,7 @@ export function assertCareAiRequestScope(scope: FrozenCareAiScope) {
   if (!session || session.user.id !== scope.accountId || session.token !== scope.token ||
       !context || context.accountId !== scope.accountId || context.familyId !== scope.familyId ||
       context.profileId !== scope.profileId || context.selection?.locked ||
+      Boolean(Taro.getStorageSync(careScopedKey('care-locked'))) ||
       aiBase() !== scope.origin ||
       Taro.getStorageSync(`care-funding-v1:${scope.accountId}:${scope.profileId}`) !== scope.fundingId) {
     throw safeError('AI_REQUEST_CONTEXT_CHANGED')
@@ -44,6 +45,7 @@ export function createTaroCommunicationAiPort() {
   } })
   return createCommunicationAiPort({
   apiBaseUrl: apiBaseUrlFor('aiFeatures'),
+  textApiBaseUrl: aiBase(),
   getAuthToken: () => taroCboardSessionStore.getAuthToken(),
   request: async options => {
     const operation = options.url === aiBase() + '/gpt/communication/sentences'
@@ -73,12 +75,14 @@ export function createTaroCommunicationAiPort() {
     const ticket = journal.prepare({ origin: frozen.origin, accountId: frozen.accountId,
       familyId: frozen.familyId, profileId: frozen.profileId, fundingId: frozen.fundingId,
       operation, body: options.data, localIdentity: options.localIdentity })
+    if (options.draftContext) options.draftContext.beforeDispatch({ ...ticket, body: options.data })
     // prepare intentionally precedes dispatch: a storage failure must never
     // leave a paid request without the identity needed to retry it safely.
     assertCareAiRequestScope(frozen)
     const request = {
       url: options.url,
       method: options.method,
+      timeout: 20000,
       data: options.data,
       header: { ...options.header, 'Idempotency-Key': ticket.requestId,
         'X-Care-Profile-Id': frozen.profileId, 'X-Care-Funding-Id': frozen.fundingId },
@@ -89,13 +93,13 @@ export function createTaroCommunicationAiPort() {
     catch (error: any) {
       const code = error?.code === 'AI_REQUEST_CONTEXT_CHANGED'
         ? error.code : 'AI_REQUEST_RESULT_UNKNOWN'
-      try { journal.observe(ticket, { code }) } catch (_) { /* prepare already persisted the stable identity. */ }
+      try { journal.observe(ticket, { code }); options.draftContext?.afterResponse(ticket, false) } catch (_) { /* prepare already persisted the stable identity. */ }
       throw safeError(code)
     }
     const payload = response.data as any
     const code = String(payload?.code || payload?.error?.code || '') ||
       (response.statusCode >= 500 || response.statusCode === 408 ? 'AI_REQUEST_RESULT_UNKNOWN' : '')
-    try { journal.observe(ticket, { status: response.statusCode, code }) }
+    try { journal.observe(ticket, { status: response.statusCode, code }); options.draftContext?.afterResponse(ticket, response.statusCode >= 200 && response.statusCode < 300) }
     catch (_) { /* Deterministic replay remains available from the prepared record. */ }
     assertCareAiRequestScope(frozen)
     return { statusCode: response.statusCode,
