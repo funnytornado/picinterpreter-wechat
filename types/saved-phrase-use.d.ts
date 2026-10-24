@@ -5,7 +5,7 @@ declare module '@cboard-communication-core/savedPhraseUse' {
     changed: boolean; item?: CommunicationSavedPhraseEntry; items: CommunicationSavedPhraseEntry[]
   }
   export function filterSavedPhrasesByText(items: CommunicationSavedPhraseEntry[], query?: string): CommunicationSavedPhraseEntry[]
-  export function clearSavedPhraseUndoSession(): void
+  export function clearSavedPhraseUndoSession(options?: { preserveGallery?: boolean }): void
   export function createSavedPhraseUndoService(options: {
     repository: CommunicationRepository; getScopeKey?: () => string; now?: () => number; canManage?: () => boolean
   }): {

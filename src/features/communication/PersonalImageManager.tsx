@@ -1,5 +1,4 @@
 import { currentImageOperationEpoch } from '@cboard-communication-core/imageOperationEpoch'
-import { verifyTaroLocalImage } from '../../platform/taroLocalImageVerification'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
@@ -34,6 +33,7 @@ import {
 } from '@cboard-communication-core/symbolMatching'
 
 import { taroPersonalImagePort } from '../../platform/taroPersonalImagePort'
+import { verifyTaroLocalImage } from '../../platform/taroLocalImageVerification'
 import PictogramImage from '../../components/PictogramImage'
 import './PersonalImageManager.css'
 
@@ -57,8 +57,9 @@ interface PersonalImageManagerProps {
   }) => boolean
   onRemoveCuratedPublic: (
     boardId: string,
-    tileId: string
-  ) => boolean
+    tileId: string,
+    options?: { guard?: () => boolean }
+  ) => boolean | Promise<boolean>
   onOpenBoardManager: () => void
 }
 
@@ -87,6 +88,8 @@ export default function PersonalImageManager({
   const savingRef = useRef(false)
   const mountedRef = useRef(true)
   const editableRef = useRef(canEditPreferences); editableRef.current = canEditPreferences
+  const libraryEditableRef = useRef(canEditLibrary); libraryEditableRef.current = canEditLibrary
+  const removingRef = useRef(false)
   const preparedRef = useRef<{key:string;image:string;epoch:number}|null>(null)
   useEffect(() => () => { mountedRef.current=false; preparedRef.current=null }, [])
   const [selectedKey, setSelectedKey] = useState('')
@@ -328,7 +331,7 @@ export default function PersonalImageManager({
     )
   }
 
-  const removeCuratedPictogram = (
+  const removeCuratedPictogram = async (
     boardId: string,
     tileId: string,
     label: string
@@ -337,12 +340,24 @@ export default function PersonalImageManager({
       setNotice('当前档案为只读，不能修改患者图库。')
       return
     }
-    const removed = onRemoveCuratedPublic(boardId, tileId)
-    setNotice(
-      removed
-        ? `已从个人板移除「${label}」，原公共图库不受影响。`
-        : `未能移除「${label}」，请稍后重试。`
-    )
+    if (removingRef.current) return
+    removingRef.current = true
+    const epoch = currentImageOperationEpoch()
+    const guard = () => mountedRef.current && epoch === currentImageOperationEpoch() && libraryEditableRef.current
+    setBusyKey(preferenceKey(tileId, boardId))
+    setNotice('正在确认移除…')
+    try {
+      const removed = await onRemoveCuratedPublic(boardId, tileId, { guard })
+      if (!guard()) return
+      setNotice(removed === true
+        ? `已从个人板移除「${label}」，可在上方撤销；原公共图库不受影响。`
+        : `移除尚未确认，请重试。`)
+    } catch (_) {
+      if (guard()) setNotice('移除尚未确认，请重试。')
+    } finally {
+      removingRef.current = false
+      if (mountedRef.current) setBusyKey('')
+    }
   }
 
   const renderCandidate = (
@@ -583,8 +598,9 @@ export default function PersonalImageManager({
                   {canEditLibrary && <View className='personal-image-card__actions'>
                     <Button
                       className='personal-image-action personal-image-action--danger'
+                      disabled={busyKey === preferenceKey(entry.tile.id, entry.boardId)}
                       onClick={() =>
-                        removeCuratedPictogram(
+                        void removeCuratedPictogram(
                           entry.boardId,
                           entry.tile.id,
                           entry.tile.label
