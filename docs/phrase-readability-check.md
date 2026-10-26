@@ -45,4 +45,13 @@ node node_modules/vitest/vitest.mjs run src/features/communication/PhrasePlaybac
 - 最大字号列表正文及查看按钮为 18px，查看按钮 88×44px，整句正文为 28px；默认整句正文为 19px。长句与完整图卡标签保留，截图核对后可滚动到达返回按钮。
 - 最大字号流程通过：情境＋搜索、返回保留筛选、9 次查看/返回、纯文字、缺图、重复图卡及同名不同 ID 人物；查看前后常用语与表达/草稿文件字节一致。
 - 本地证据：工作区 logs/readability-375-normal-list.log、readability-375-{normal,extra-large}-{overlay.log,end.jpg}、readability-375-extra-large-list.log、readability-375-flow.json。无新业务代码改动。
-- 待验收：768px 平板布局与真机；本记录不代表上传、发布或真机通过。
+- 当时待验收：768px 平板布局与真机；768px 后续结果见下。没有上传或发布。
+
+## 2026-10-26 补充：768px 平板验收与本地结论
+
+- 开发者工具真实 iPad 选项，运行时确认 windowWidth=768、windowHeight=960。默认及最大字号的8条列表、完整长句、操作宽度与触摸尺寸检查通过；纵向滚动后末尾文字与返回按钮可达。
+- 默认字号列表/查看为28px、整句49px；最大字号列表/查看36px、整句65px、查看按钮176×90px。数值来自模拟器实际样式，沿用项目现有响应式字号规则。
+- 最大字号下情境与搜索组合、返回保留条件、9次查看/返回、纯文字、缺图、重复图卡、同名不同身份人物通过；常用语与表达/草稿文件字节一致。
+- 快捷面板实际6条，经“查看全部（8）”到达管理页面，第7/8条均可读取。首次快速断言碰到页面切换时序；直接 waitForSelector 又绑定到旧页面。改为有上限地核对当前页面和目标条目出现后，整条流程复测通过；未修改业务逻辑来规避工具错误。
+- 本地证据：工作区 logs/readability-768-{normal,extra-large}-{list.log,overlay.log,end.jpg}、readability-768-flow.json、readability-768-quick.json、readability-768-quick-page-ready.log。
+- 本次专项要求的375px/768px默认与最大字号模拟器验收已通过，另有390px补充证据。真机未测试，本次范围不安排手机真机；没有上传、发布或推送代码。
