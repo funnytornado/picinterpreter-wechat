@@ -181,7 +181,7 @@ export default function SavedPhraseManager({
       </View>
 
       <LifeContextFilter items={items} value={lifeContext} onChange={setLifeContext} />
-      <Input ariaLabel='搜索常用语原句' placeholder='搜索常用语原句' value={query} onInput={event => setQuery(event.detail.value)} />
+      <Input className='phrase-manager__input phrase-manager__search' ariaLabel='搜索常用语原句' placeholder='搜索常用语原句' value={query} onInput={event => setQuery(event.detail.value)} />
       <PatientActionButton action={PATIENT_ACTION_IDS.undo} outputIcon='undo'
         label={`撤销删除（${undoState.count}）`} ariaLabel='撤销上次删除的常用语'
         disabled={!undoState.count} onClick={undoDelete}

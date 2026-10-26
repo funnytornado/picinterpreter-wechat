@@ -69,3 +69,22 @@ test('manager double undo dispatches one operation without a countdown',async()=
   undo();undo();assert.deepEqual(operations,['one']);
   await Promise.resolve();assert.equal(pending.current,false);
 });
+
+test('manager silent viewing preserves the selected phrase, filters and usage',()=>{
+  const shown=[],notices=[];
+  const item=Object.freeze({id:'seventh',sentence:'这是第七条常用语。',usageCount:2,
+    output:Object.freeze([{id:'person-a',label:'小明'},{id:'person-b',label:'小明'}])});
+  const c={speechRun:{current:0},speechPending:{current:false},speechCounted:{current:true},
+    wechatSpeechPort:{stop(){}},setSpeaking(){},
+    setPlaybackPhrase:value=>shown.push(value),setNotice:value=>notices.push(value),
+    speak(){assert.fail('Viewing must not start playback')},
+    setLifeContext(){assert.fail('Viewing must preserve the context filter')},
+    setQuery(){assert.fail('Viewing must preserve the search query')},
+    onItemsChange(){assert.fail('Viewing must not write usage or saved content')}};
+  c.stop=extract('SavedPhraseManager.tsx','stop',c);
+  const open=extract('SavedPhraseManager.tsx','openPhrase',c);
+  open(item);open(item);
+  assert.equal(shown.length,2);assert.equal(shown[0],item);assert.equal(shown[1],item);
+  assert.equal(item.usageCount,2);assert.match(notices.at(-1),/仅查看/);
+  assert.equal(c.speechCounted.current,false);
+});
