@@ -59,6 +59,9 @@
 .phrase-manager__images {
   display: flex;
   min-width: 84px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .phrase-manager__image {
   width: 54px;
@@ -67,6 +70,30 @@
   border: 2px solid #fff;
   border-radius: 12px;
   background: #f8fafc;
+}
+.phrase-manager__image.pictogram-image-fallback {
+  width: 200px;
+  max-width: 100%;
+  min-height: 88rpx;
+  height: auto;
+  margin-right: 0;
+  padding: 12px;
+  font-size: 28px;
+}
+.phrase-manager__image .pictogram-image-fallback__text,
+.phrase-manager__image .pictogram-image-fallback__retry {
+  display: block;
+  overflow: visible;
+  font-size: inherit;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: unset;
+}
+.communication-page--font-large .phrase-manager__image.pictogram-image-fallback {
+  font-size: 32px;
+}
+.communication-page--font-extra-large .phrase-manager__image.pictogram-image-fallback {
+  font-size: 36px;
 }
 .phrase-manager__copy,
 .history-manager__copy {

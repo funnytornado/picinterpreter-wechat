@@ -3067,7 +3067,6 @@ page {
   .phrase-playback-overlay__image,
   .phrase-playback-overlay__missing {
     width: 100%;
-    width: 110px;
     height: 110px;
   }
 

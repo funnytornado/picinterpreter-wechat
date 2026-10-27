@@ -45,6 +45,19 @@ if (mode === 'list') {
   for (const id of rowIds) {
     const row = `#${id}`
     const size = element(row, 'size')
+    const fallbacks = call('automation_page_action', { action: 'querySelectorAll',
+      selector: `${row} .pictogram-image-fallback` }).elements
+    if (fallbacks.length) {
+      const fallback = `${row} .pictogram-image-fallback`
+      const box = element(fallback, 'size'), origin = element(fallback, 'offset')
+      for (const child of ['.pictogram-image-fallback__text', '.pictogram-image-fallback__retry']) {
+        const textBox = element(`${fallback} ${child}`, 'size')
+        const textOrigin = element(`${fallback} ${child}`, 'offset')
+        check(textOrigin.top >= origin.top && textOrigin.top + textBox.height <= origin.top + box.height + 1,
+          `${id}: fallback text is not clipped vertically`)
+        check(font(`${fallback} ${child}`) >= minFont, `${id}: fallback follows selected text size`)
+      }
+    }
     check(size.width <= system.windowWidth, `${id}: row fits the viewport`)
     check(font(`${row} .phrase-manager__sentence`) >= minFont, `${id}: sentence follows selected text size`)
     const markup = element(row, 'outerWxml')
@@ -65,6 +78,14 @@ if (mode === 'list') {
   const card = element('.phrase-playback-overlay__card', 'size')
   const text = element('.phrase-playback-overlay__sentence', 'size')
   check(card.width <= system.windowWidth && text.width <= card.width, 'Sentence fits the overlay width')
+  const missing = call('automation_page_action', { action: 'querySelectorAll',
+    selector: '.phrase-playback-overlay__missing' }).elements
+  if (missing.length) {
+    const placeholder = element('.phrase-playback-overlay__missing', 'size')
+    const figure = element('.phrase-playback-overlay__figure', 'size')
+    check(placeholder.width >= figure.width - 1 && placeholder.width <= figure.width + 1,
+      'Missing-image explanation uses the available figure width')
+  }
   for (const selector of ['#phrase-playback-close', '#phrase-playback-replay']) {
     const size = element(selector, 'size')
     check(size.height >= 44 && size.width >= 44, `${selector}: target is at least 44px`)
