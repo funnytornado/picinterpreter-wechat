@@ -55,3 +55,10 @@ node node_modules/vitest/vitest.mjs run src/features/communication/PhrasePlaybac
 - 快捷面板实际6条，经“查看全部（8）”到达管理页面，第7/8条均可读取。首次快速断言碰到页面切换时序；直接 waitForSelector 又绑定到旧页面。改为有上限地核对当前页面和目标条目出现后，整条流程复测通过；未修改业务逻辑来规避工具错误。
 - 本地证据：工作区 logs/readability-768-{normal,extra-large}-{list.log,overlay.log,end.jpg}、readability-768-flow.json、readability-768-quick.json、readability-768-quick-page-ready.log。
 - 本次专项要求的375px/768px默认与最大字号模拟器验收已通过，另有390px补充证据。真机未测试，本次范围不安排手机真机；没有上传、发布或推送代码。
+
+## 2026-10-27 搜索空结果提示修正
+
+- 复现：已有8条常用语，输入不匹配的搜索词，原页面误提示“这个情境还没有常用语”。这与实际搜索无结果的原因不符。
+- 修复：区分搜索无结果、所选情境为空、整个常用语库为空三种提示；不修改筛选、保存或使用逻辑。
+- 验证：7项实际源码回调测试（含新增空结果场景）、typecheck、目标lint、构建和产物检查通过；768px最大字号/高对比度下，全部及外出情境的无结果提示正确，清空搜索后恢复8条，常用语及表达草稿文件字节不变。
+- 证据：工作区logs/ui-round2-search.json、ui-round2-search-run.log、ui-round2-search-after.jpg、ui-round2-callback-tests.log。缺图布局仍在同轮单独复验，不能将旧尺寸结果充当本轮新增样式的完整验收。
