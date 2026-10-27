@@ -80,6 +80,7 @@ import { runCommunicationAiConnectionTest } from '../../../../features/communica
 import HistoryManager from '../../../../features/communication/HistoryManager'
 import MatchingDiagnosticsPanel from '../../../../features/communication/MatchingDiagnosticsPanel'
 import SavedPhraseManager from '../../../../features/communication/SavedPhraseManager'
+import { readSavedPhraseLifeContext } from '../../../../features/communication/savedPhraseNavigation'
 import {
   createCommunicationManagementService
 } from '../../../../features/communication/management'
@@ -773,7 +774,7 @@ export default function CommunicationManagementPage() {
       {view === 'phrases' && (
         <SavedPhraseManager
           key={careScopedKey('phrase-manager')}
-          initialLifeContext={router.params.lifeContext === undefined ? null : router.params.lifeContext}
+          initialLifeContext={readSavedPhraseLifeContext(router.params.lifeContext)}
           service={managementServiceRef.current}
           items={savedPhraseItems}
           speechRate={preferences.speechRate}

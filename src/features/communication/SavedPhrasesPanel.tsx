@@ -7,6 +7,7 @@ import { isCareSharedPhrase } from '@cboard-communication-core/careSharedPhrases
 
 import LifeContextFilter from './LifeContextFilter'
 import PictogramImage from '../../components/PictogramImage'
+import { buildSavedPhraseManagementUrl } from './savedPhraseNavigation'
 
 interface SavedPhrasesPanelProps {
   items: CommunicationSavedPhraseEntry[]
@@ -35,9 +36,7 @@ export default function SavedPhrasesPanel({
       </View>
 
       <LifeContextFilter items={items} value={lifeContext} onChange={setLifeContext} />
-      <Button id='saved-phrases-view-all' onClick={() => void Taro.navigateTo({ url: '/packages/management/pages/index/index?view=phrases' +
-        (lifeContext === null ? '' : `&lifeContext=${encodeURIComponent(lifeContext)}`) })}
-      >查看全部（{filtered.length}）</Button>
+      <Button id='saved-phrases-view-all' onClick={() => void Taro.navigateTo({ url: buildSavedPhraseManagementUrl(lifeContext) })}>查看全部（{filtered.length}）</Button>
       {visible.length ? (
         <ScrollView scrollX className='saved-phrases-scroll'>
           <View className='saved-phrases-list'>
