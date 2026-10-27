@@ -64,6 +64,11 @@ export default function SavedPhraseManager({
   const [contextEditingId, setContextEditingId] = useState('')
   const [contextDraft, setContextDraft] = useState('')
   const contextItems = filterSavedPhrasesByText(filterSavedPhrasesByLifeContext(items, lifeContext), query)
+  const emptyNotice = query.trim()
+    ? '没有找到匹配的常用语，可修改或清空搜索。'
+    : items.length
+      ? '这个情境还没有常用语，可切回全部进行整理。'
+      : '还没有常用语，可输入文字新增，或准备常用表达。'
   const quickItems = getCommunicationQuickPhrases(contextItems, 6)
   const prepare = (request?: { id: string; mode: 'edit' | 'copy' }) => {
     const scope = careScopedKey('phrase-preparation')
@@ -181,7 +186,7 @@ export default function SavedPhraseManager({
       </View>
 
       <LifeContextFilter items={items} value={lifeContext} onChange={setLifeContext} />
-      <Input ariaLabel='搜索常用语原句' placeholder='搜索常用语原句' value={query} onInput={event => setQuery(event.detail.value)} />
+      <Input className='phrase-manager__input phrase-manager__search' ariaLabel='搜索常用语原句' placeholder='搜索常用语原句' value={query} onInput={event => setQuery(event.detail.value)} />
       <PatientActionButton action={PATIENT_ACTION_IDS.undo} outputIcon='undo'
         label={`撤销删除（${undoState.count}）`} ariaLabel='撤销上次删除的常用语'
         disabled={!undoState.count} onClick={undoDelete}
@@ -266,7 +271,7 @@ export default function SavedPhraseManager({
           </View>
         ))}
       </View>
-      {!contextItems.length && <Text className='storage-notice'>这个情境还没有常用语，可切回全部进行整理。</Text>}
+      {!contextItems.length && <Text className='storage-notice'>{emptyNotice}</Text>}
 
       {importPreview && <View aria-label='常用语导入预览'>
         <Text>预计新增 {importPreview.wouldAddCount || 0} 条；重复 {importPreview.duplicateCount || 0} 条；无效 {importPreview.invalidCount || 0} 条；缺少图片 {importPreview.missingPictogramCount || 0} 个；剩余容量 {importPreview.availableSlots || 0} 条。</Text>

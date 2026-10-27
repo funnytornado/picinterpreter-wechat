@@ -59,6 +59,9 @@
 .phrase-manager__images {
   display: flex;
   min-width: 84px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .phrase-manager__image {
   width: 54px;
@@ -67,6 +70,30 @@
   border: 2px solid #fff;
   border-radius: 12px;
   background: #f8fafc;
+}
+.phrase-manager__image.pictogram-image-fallback {
+  width: 200px;
+  max-width: 100%;
+  min-height: 88rpx;
+  height: auto;
+  margin-right: 0;
+  padding: 12px;
+  font-size: 28px;
+}
+.phrase-manager__image .pictogram-image-fallback__text,
+.phrase-manager__image .pictogram-image-fallback__retry {
+  display: block;
+  overflow: visible;
+  font-size: inherit;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: unset;
+}
+.communication-page--font-large .phrase-manager__image.pictogram-image-fallback {
+  font-size: 32px;
+}
+.communication-page--font-extra-large .phrase-manager__image.pictogram-image-fallback {
+  font-size: 36px;
 }
 .phrase-manager__copy,
 .history-manager__copy {
@@ -79,8 +106,10 @@
 }
 .phrase-manager__sentence {
   color: #17232d;
-  font-size: 27px;
+  font-size: 28px;
   font-weight: 800;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .phrase-manager__usage {
   margin-top: 4px;
@@ -93,6 +122,44 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Keep the sentence's width independent of the number of row actions. */
+.phrase-manager__row {
+  flex-wrap: wrap;
+}
+.phrase-manager__row > .phrase-manager__actions {
+  flex-basis: 100%;
+  justify-content: flex-start;
+}
+.phrase-manager .review-action,
+.phrase-manager__actions .button {
+  box-sizing: border-box;
+  width: auto;
+  max-width: 100%;
+  min-height: 88rpx;
+  height: auto;
+  flex: 0 1 auto;
+  padding: 12px 16px;
+  font-size: 28px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.phrase-manager__search {
+  margin: 18px 0;
+}
+.communication-page--font-large .phrase-manager__sentence,
+.communication-page--font-large .phrase-manager .review-action,
+.communication-page--font-large .phrase-manager__actions .button,
+.communication-page--font-large .phrase-manager__input {
+  font-size: 32px;
+}
+.communication-page--font-extra-large .phrase-manager__sentence,
+.communication-page--font-extra-large .phrase-manager .review-action,
+.communication-page--font-extra-large .phrase-manager__actions .button,
+.communication-page--font-extra-large .phrase-manager__input {
+  font-size: 36px;
 }
 .history-manager__session {
   margin-top: 20px;

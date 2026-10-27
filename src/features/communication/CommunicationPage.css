@@ -2927,12 +2927,12 @@ page {
 
 .phrase-playback-overlay__label {
   width: 100%;
-  overflow: hidden;
   color: #365b52;
   font-size: 22px;
   font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .phrase-playback-overlay__sentence {
@@ -2940,7 +2940,7 @@ page {
   color: #102f29;
   font-size: 48px;
   font-weight: 900;
-  line-height: 1.3;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
@@ -2948,7 +2948,8 @@ page {
   min-height: 30px;
   margin-top: 20px;
   color: #5a706a;
-  font-size: 20px;
+  font-size: 24px;
+  line-height: 1.5;
 }
 
 .phrase-playback-overlay__actions {
@@ -2962,12 +2963,56 @@ page {
 
 .phrase-playback-overlay__replay,
 .phrase-playback-overlay__close {
-  height: 68px;
+  min-height: 88rpx;
+  height: auto;
   margin: 0;
   border-radius: 18px;
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 900;
-  line-height: 66px;
+  line-height: 1.4;
+}
+
+.phrase-playback-overlay__actions .patient-action-button__label {
+  font-size: inherit;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.communication-page--font-large .phrase-playback-overlay__sentence {
+  font-size: 56px;
+}
+.communication-page--font-extra-large .phrase-playback-overlay__sentence {
+  font-size: 64px;
+}
+.communication-page--font-large .phrase-playback-overlay__figure {
+  width: 180px;
+}
+.communication-page--font-extra-large .phrase-playback-overlay__figure {
+  width: 216px;
+}
+.communication-page--font-large .phrase-playback-overlay__label,
+.communication-page--font-large .phrase-playback-overlay__missing,
+.communication-page--font-large .phrase-playback-overlay__replay,
+.communication-page--font-large .phrase-playback-overlay__close {
+  font-size: 32px;
+}
+.communication-page--font-extra-large .phrase-playback-overlay__label,
+.communication-page--font-extra-large .phrase-playback-overlay__missing,
+.communication-page--font-extra-large .phrase-playback-overlay__replay,
+.communication-page--font-extra-large .phrase-playback-overlay__close {
+  font-size: 36px;
+}
+.communication-page--font-large .phrase-playback-overlay__status {
+  font-size: 25px;
+}
+.communication-page--font-extra-large .phrase-playback-overlay__status {
+  font-size: 29px;
+}
+.phrase-playback-overlay__missing {
+  width: 100%;
+  min-height: 142px;
+  height: auto;
 }
 
 .phrase-playback-overlay__replay {
@@ -3021,17 +3066,26 @@ page {
 
   .phrase-playback-overlay__image,
   .phrase-playback-overlay__missing {
-    width: 110px;
+    width: 100%;
     height: 110px;
   }
 
   .phrase-playback-overlay__missing {
-    font-size: 18px;
+    min-height: 110px;
+    height: auto;
+    font-size: 24px;
     padding: 8px;
   }
 
   .phrase-playback-overlay__sentence {
     font-size: 38px;
+  }
+
+  .communication-page--font-large .phrase-playback-overlay__sentence {
+    font-size: 48px;
+  }
+  .communication-page--font-extra-large .phrase-playback-overlay__sentence {
+    font-size: 56px;
   }
 }
 

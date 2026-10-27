@@ -28,6 +28,13 @@ function fixture() {
   };
   return {c,pending,used,shown,notices,run:name=>extract('ExpressionWorkspace.tsx',name,c)};
 }
+test('manager distinguishes empty search results, empty contexts and an empty library',()=>{
+  const notice=(query,items)=>extract('SavedPhraseManager.tsx','emptyNotice',{query,items});
+  assert.match(notice('不存在的合成搜索',[{id:'one'}]),/没有找到匹配.*清空搜索/);
+  assert.match(notice('',[{id:'one'}]),/这个情境.*切回全部/);
+  assert.match(notice('   ',[]),/还没有常用语.*新增/);
+  assert.match(notice('搜索',[]),/没有找到匹配/);
+});
 test('mini silent view and close never play, count or mutate the expression',()=>{
   const f=fixture(); f.run('handleViewSavedPhrase')(f.c.playbackPhrase);
   assert.equal(f.pending.length,0); assert.equal(f.used.length,0);
@@ -68,4 +75,23 @@ test('manager double undo dispatches one operation without a countdown',async()=
   });
   undo();undo();assert.deepEqual(operations,['one']);
   await Promise.resolve();assert.equal(pending.current,false);
+});
+
+test('manager silent viewing preserves the selected phrase, filters and usage',()=>{
+  const shown=[],notices=[];
+  const item=Object.freeze({id:'seventh',sentence:'这是第七条常用语。',usageCount:2,
+    output:Object.freeze([{id:'person-a',label:'小明'},{id:'person-b',label:'小明'}])});
+  const c={speechRun:{current:0},speechPending:{current:false},speechCounted:{current:true},
+    wechatSpeechPort:{stop(){}},setSpeaking(){},
+    setPlaybackPhrase:value=>shown.push(value),setNotice:value=>notices.push(value),
+    speak(){assert.fail('Viewing must not start playback')},
+    setLifeContext(){assert.fail('Viewing must preserve the context filter')},
+    setQuery(){assert.fail('Viewing must preserve the search query')},
+    onItemsChange(){assert.fail('Viewing must not write usage or saved content')}};
+  c.stop=extract('SavedPhraseManager.tsx','stop',c);
+  const open=extract('SavedPhraseManager.tsx','openPhrase',c);
+  open(item);open(item);
+  assert.equal(shown.length,2);assert.equal(shown[0],item);assert.equal(shown[1],item);
+  assert.equal(item.usageCount,2);assert.match(notices.at(-1),/仅查看/);
+  assert.equal(c.speechCounted.current,false);
 });
